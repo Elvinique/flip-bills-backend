@@ -1,0 +1,64 @@
+version: "3.9"
+
+services:
+  # ── PostgreSQL — Master ledger ─────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: fb_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: flipbills
+      POSTGRES_PASSWORD: supersecret
+      POSTGRES_DB: flipbills_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./migrations:/docker-entrypoint-initdb.d   # auto-runs on first start
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U flipbills"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── MongoDB — Dynamic partner payloads ────────────────────────────────────
+  mongo:
+    image: mongo:7
+    container_name: fb_mongo
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+
+  # ── Redis — Session, rate-limiting, idempotency queue ─────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: fb_redis
+    restart: unless-stopped
+    command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru
+    ports:
+      - "6379:6379"
+
+  # ── API Server ────────────────────────────────────────────────────────────
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: fb_api
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      mongo:
+        condition: service_started
+    env_file:
+      - .env
+    ports:
+      - "8080:8080"
+
+volumes:
+  postgres_data:
+  mongo_data:
