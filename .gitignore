@@ -1,0 +1,19 @@
+# Environment — never commit real secrets
+.env
+
+# Build output
+bin/
+
+# IDE
+.idea/
+*.iml
+*.xml
+
+# Go
+*.test
+*.out
+vendor/
+
+# OS
+.DS_Store
+Thumbs.db

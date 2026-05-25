@@ -1,6 +1,9 @@
 package utilities
 
 import (
+	"errors"
+	"strings"
+
 	"github.com/flip-bills/backend/internal/middleware"
 	utilitysvc "github.com/flip-bills/backend/internal/services/utilities"
 	"github.com/flip-bills/backend/pkg/response"
@@ -29,6 +32,10 @@ func (h *Handler) BuyAirtime(c *gin.Context) {
 		return
 	}
 	response.OK(c, "airtime purchase successful", tx)
+}
+
+func (h *Handler) GetCatalog(c *gin.Context) {
+	response.OK(c, "VAS catalog retrieved", h.svc.GetCatalog(c.Request.Context()))
 }
 
 func (h *Handler) BuyData(c *gin.Context) {
@@ -67,8 +74,28 @@ func (h *Handler) FundBetting(c *gin.Context) {
 	}
 	tx, err := h.svc.FundBettingWallet(c.Request.Context(), middleware.GetUserID(c), req)
 	if err != nil {
+		var challenge *utilitysvc.RiskChallengeError
+		if errors.As(err, &challenge) {
+			response.UnprocessableEntity(c, "extra confirmation required", challenge)
+			return
+		}
 		response.UnprocessableEntity(c, err.Error(), nil)
 		return
 	}
 	response.OK(c, "betting wallet funded", tx)
+}
+
+func (h *Handler) GetTransaction(c *gin.Context) {
+	ref := strings.TrimSpace(c.Param("reference"))
+	if ref == "" {
+		response.BadRequest(c, "reference is required", nil)
+		return
+	}
+
+	tx, err := h.svc.GetTransaction(c.Request.Context(), middleware.GetUserID(c), ref)
+	if err != nil {
+		response.NotFound(c, "transaction not found")
+		return
+	}
+	response.OK(c, "transaction retrieved", tx)
 }

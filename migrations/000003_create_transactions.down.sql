@@ -1,0 +1,12 @@
+DROP INDEX IF EXISTS transactions_reference_unique_idx;
+DROP INDEX IF EXISTS transactions_user_id_idx;
+DROP INDEX IF EXISTS transactions_wallet_id_idx;
+DROP INDEX IF EXISTS transactions_status_idx;
+DROP INDEX IF EXISTS transactions_created_at_idx;
+DROP INDEX IF EXISTS transactions_category_idx;
+DROP INDEX IF EXISTS transactions_recon_idx;
+DROP INDEX IF EXISTS transactions_meta_gin_idx;
+DROP TABLE IF EXISTS transactions;
+DROP TYPE IF EXISTS service_category;
+DROP TYPE IF EXISTS tx_type;
+DROP TYPE IF EXISTS tx_status;

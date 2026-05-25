@@ -79,19 +79,19 @@ func (e *Engine) ExecuteWithFallback(
 	// ── Re-debit and attempt fallback aggregator ──────────────────────────────
 	fallbackRef := fmt.Sprintf("%s_FB", tx.Reference)
 	fallbackTx := &models.Transaction{
-		ID:          uuid.New(),
-		UserID:      tx.UserID,
-		WalletID:    tx.WalletID,
-		Reference:   fallbackRef,
-		Type:        models.TxTypeDebit,
-		Category:    tx.Category,
-		Amount:      tx.Amount,
-		Fee:         tx.Fee,
-		Status:      models.TxProcessing,
-		Provider:    "fallback",
-		Narration:   tx.Narration + " (fallback attempt)",
-		CreatedAt:   time.Now(),
-		UpdatedAt:   time.Now(),
+		ID:        uuid.New(),
+		UserID:    tx.UserID,
+		WalletID:  tx.WalletID,
+		Reference: fallbackRef,
+		Type:      models.TxTypeDebit,
+		Category:  tx.Category,
+		Amount:    tx.Amount,
+		Fee:       tx.Fee,
+		Status:    models.TxProcessing,
+		Provider:  "fallback",
+		Narration: tx.Narration + " (fallback attempt)",
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
 	}
 
 	_, debitErr := e.walletRepo.DebitWithLock(ctx, tx.UserID.String(), tx.Amount)
@@ -117,25 +117,31 @@ func (e *Engine) ExecuteWithFallback(
 
 // reverseDebit credits the wallet back and writes a reversal transaction.
 func (e *Engine) reverseDebit(ctx context.Context, original *models.Transaction) error {
-	if err := e.walletRepo.CreditBalance(ctx, original.WalletID, original.Amount); err != nil {
-		return err
-	}
-	reversalID := uuid.New()
+	reversalRef := fmt.Sprintf("REV_%s", original.Reference)
+	reversedTxID := original.ID
 	reversal := &models.Transaction{
 		ID:           uuid.New(),
 		UserID:       original.UserID,
 		WalletID:     original.WalletID,
-		Reference:    fmt.Sprintf("REV_%s", original.Reference),
+		Reference:    reversalRef,
 		Type:         models.TxTypeReversal,
 		Category:     original.Category,
 		Amount:       original.Amount,
 		Status:       models.TxSuccess,
 		Narration:    fmt.Sprintf("Auto-reversal for failed tx: %s", original.Reference),
-		ReversedTxID: &reversalID,
+		ReversedTxID: &reversedTxID,
 		CreatedAt:    time.Now(),
 		UpdatedAt:    time.Now(),
 	}
-	_ = e.walletRepo.InsertTransaction(ctx, reversal)
-	_ = e.walletRepo.UpdateTransactionStatus(ctx, original.Reference, models.TxReversed, "")
+	created, err := e.walletRepo.ReverseDebitIfNeeded(ctx, original, reversal)
+	if err != nil {
+		return err
+	}
+	if !created {
+		e.log.Warn("reversal already exists; skipping duplicate wallet credit",
+			zap.String("ref", original.Reference),
+			zap.String("reversal_ref", reversalRef),
+		)
+	}
 	return nil
 }

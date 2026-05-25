@@ -9,7 +9,6 @@ import (
 	"github.com/joho/godotenv"
 )
 
-// Config holds all runtime configuration loaded from environment variables.
 type Config struct {
 	AppEnv string
 	Server ServerConfig
@@ -20,6 +19,7 @@ type Config struct {
 	Pay    PaymentConfig
 	SMS    SMSConfig
 	Recon  ReconciliationConfig
+	Travel TravelConfig
 }
 
 type ServerConfig struct {
@@ -55,13 +55,14 @@ type JWTConfig struct {
 }
 
 type PaymentConfig struct {
-	FlutterwaveKey     string
-	FlutterwaveBaseURL string
-	MonnifyAPIKey      string
-	MonnifySecret      string
-	MonnifyBaseURL     string
-	InterswitchClientID string
-	InterswitchSecret   string
+	FlutterwaveKey           string
+	FlutterwaveBaseURL       string
+	FlutterwaveWebhookSecret string // verif-hash header value set in FLW dashboard
+	MonnifyAPIKey            string
+	MonnifySecret            string
+	MonnifyBaseURL           string
+	InterswitchClientID      string
+	InterswitchSecret        string
 }
 
 type SMSConfig struct {
@@ -73,9 +74,22 @@ type ReconciliationConfig struct {
 	TimeoutSeconds int
 }
 
-// Load reads .env (if present) then pulls values from environment.
+// TravelConfig holds credentials for all transport/GDS partners.
+type TravelConfig struct {
+	GIGMAPIKey        string
+	GIGMBaseURL       string
+	GIGMDispatcherKey string // SHA-256 pre-hashed API key for Terminal Dispatcher webhook
+	ABCAPIKey         string
+	ABCBaseURL        string
+	ABCDispatcherKey  string // SHA-256 pre-hashed API key for Terminal Dispatcher webhook
+	AmadeusClientID   string
+	AmadeusSecret     string
+	AmadeusBaseURL    string
+	OfflineQRSecret   string // HMAC secret for QR ticket signing
+}
+
 func Load() *Config {
-	_ = godotenv.Load() // silently OK if .env absent in production
+	_ = godotenv.Load()
 
 	return &Config{
 		AppEnv: getEnv("APP_ENV", "development"),
@@ -107,13 +121,14 @@ func Load() *Config {
 			RefreshTTL: getDuration("JWT_REFRESH_TTL", 720*time.Hour),
 		},
 		Pay: PaymentConfig{
-			FlutterwaveKey:      getEnv("FLUTTERWAVE_SECRET_KEY", ""),
-			FlutterwaveBaseURL:  getEnv("FLUTTERWAVE_BASE_URL", "https://api.flutterwave.com/v3"),
-			MonnifyAPIKey:       getEnv("MONNIFY_API_KEY", ""),
-			MonnifySecret:       getEnv("MONNIFY_SECRET_KEY", ""),
-			MonnifyBaseURL:      getEnv("MONNIFY_BASE_URL", "https://sandbox.monnify.com"),
-			InterswitchClientID: getEnv("INTERSWITCH_CLIENT_ID", ""),
-			InterswitchSecret:   getEnv("INTERSWITCH_SECRET", ""),
+			FlutterwaveKey:           getEnv("FLUTTERWAVE_SECRET_KEY", ""),
+			FlutterwaveBaseURL:       getEnv("FLUTTERWAVE_BASE_URL", "https://api.flutterwave.com/v3"),
+			FlutterwaveWebhookSecret: getEnv("FLUTTERWAVE_WEBHOOK_SECRET", ""),
+			MonnifyAPIKey:            getEnv("MONNIFY_API_KEY", ""),
+			MonnifySecret:            getEnv("MONNIFY_SECRET_KEY", ""),
+			MonnifyBaseURL:           getEnv("MONNIFY_BASE_URL", "https://sandbox.monnify.com"),
+			InterswitchClientID:      getEnv("INTERSWITCH_CLIENT_ID", ""),
+			InterswitchSecret:        getEnv("INTERSWITCH_SECRET", ""),
 		},
 		SMS: SMSConfig{
 			TermiiAPIKey:  getEnv("TERMII_API_KEY", ""),
@@ -122,10 +137,20 @@ func Load() *Config {
 		Recon: ReconciliationConfig{
 			TimeoutSeconds: getEnvInt("RECONCILIATION_TIMEOUT_SECONDS", 45),
 		},
+		Travel: TravelConfig{
+			GIGMAPIKey:        getEnv("GIGM_API_KEY", ""),
+			GIGMBaseURL:       getEnv("GIGM_BASE_URL", "https://api.gigm.com/api"),
+			GIGMDispatcherKey: getEnv("GIGM_DISPATCHER_KEY", ""),
+			ABCAPIKey:         getEnv("ABC_API_KEY", ""),
+			ABCBaseURL:        getEnv("ABC_BASE_URL", "https://api.abctransport.com.ng"),
+			ABCDispatcherKey:  getEnv("ABC_DISPATCHER_KEY", ""),
+			AmadeusClientID:   getEnv("AMADEUS_CLIENT_ID", ""),
+			AmadeusSecret:     getEnv("AMADEUS_CLIENT_SECRET", ""),
+			AmadeusBaseURL:    getEnv("AMADEUS_BASE_URL", "https://test.api.amadeus.com"),
+			OfflineQRSecret:   mustGetEnv("OFFLINE_QR_SECRET"),
+		},
 	}
 }
-
-// ── helpers ──────────────────────────────────────────────────────────────────
 
 func getEnv(key, fallback string) string {
 	if v := os.Getenv(key); v != "" {
