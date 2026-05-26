@@ -206,10 +206,13 @@ func (s *Service) BookBus(ctx context.Context, userID string, req BusBookRequest
 		return nil, fmt.Errorf("seat hold failed: %w", err)
 	}
 
-	// 2. Look up price from search result to debit wallet.
-	// In production, re-query the operator for the live price to prevent tampering.
-	// For now we use a placeholder; this is replaced when real API is wired.
-	var priceKobo int64 = 750000 // TODO: fetch from live search result by vehicleRef
+	// 2. Re-query the selected operator for live price to prevent client tampering.
+	offer, err := s.findLiveBusOffer(ctx, op, req)
+	if err != nil {
+		_ = op.Cancel(ctx, holdRef)
+		return nil, err
+	}
+	priceKobo := offer.PriceKobo
 
 	// 3. Debit wallet — atomic, checked against daily limit.
 	wallet, err := s.walletRepo.FindByUserID(ctx, userID)
@@ -241,7 +244,11 @@ func (s *Service) BookBus(ctx context.Context, userID string, req BusBookRequest
 		CreatedAt:     time.Now(),
 		UpdatedAt:     time.Now(),
 	}
-	_ = s.walletRepo.InsertTransaction(ctx, tx)
+	if err := s.walletRepo.InsertTransaction(ctx, tx); err != nil {
+		_ = s.walletRepo.CreditBalance(ctx, wallet.ID, priceKobo)
+		_ = op.Cancel(ctx, holdRef)
+		return nil, fmt.Errorf("could not record bus transaction: %w", err)
+	}
 
 	// 5. Confirm booking with operator.
 	ticketCode, err := op.Confirm(ctx, holdRef, req.Passenger)
@@ -280,7 +287,7 @@ func (s *Service) BookBus(ctx context.Context, userID string, req BusBookRequest
 		OperatorName:     op.Name(),
 		Origin:           req.Origin,
 		Destination:      req.Destination,
-		DepartureTime:    departure,
+		DepartureTime:    firstNonZeroTime(offer.DepartureTime, departure),
 		SeatNumber:       req.SeatNumber,
 		VehicleRef:       req.VehicleRef,
 		PassengerName:    req.Passenger.FullName,
@@ -338,11 +345,36 @@ func (s *Service) BookFlight(ctx context.Context, userID string, req FlightBookR
 		return nil, err
 	}
 
+	txID := uuid.New()
+	ref := fmt.Sprintf("FB-FLIGHT-%s", uuid.NewString()[:8])
+	tx := &models.Transaction{
+		ID:            txID,
+		UserID:        wallet.UserID,
+		WalletID:      wallet.ID,
+		Reference:     ref,
+		Type:          models.TxTypeDebit,
+		Category:      models.CategoryFlight,
+		Amount:        offer.PriceKobo,
+		BalanceBefore: wallet.Balance,
+		BalanceAfter:  wallet.Balance - offer.PriceKobo,
+		Status:        models.TxProcessing,
+		Provider:      op.Code(),
+		Narration:     fmt.Sprintf("Flight: %s → %s (%s)", offer.Origin, offer.Destination, offer.Airline),
+		CreatedAt:     time.Now(),
+		UpdatedAt:     time.Now(),
+	}
+	if err := s.walletRepo.InsertTransaction(ctx, tx); err != nil {
+		_ = s.walletRepo.CreditBalance(ctx, wallet.ID, offer.PriceKobo)
+		return nil, fmt.Errorf("could not record flight transaction: %w", err)
+	}
+
 	ticketCode, err := op.Book(ctx, req.GDSRef, req.Passenger)
 	if err != nil {
 		_ = s.walletRepo.CreditBalance(ctx, wallet.ID, offer.PriceKobo)
+		_ = s.walletRepo.UpdateTransactionStatus(ctx, ref, models.TxReversed, "")
 		return nil, fmt.Errorf("GDS booking failed — wallet refunded")
 	}
+	_ = s.walletRepo.UpdateTransactionStatus(ctx, ref, models.TxSuccess, ticketCode)
 
 	qrPayload, qrHash, _ := crypto.GenerateOfflineQRPayload(crypto.OfflineTicketPayload{
 		BookingID:     uuid.NewString(),
@@ -356,6 +388,7 @@ func (s *Service) BookFlight(ctx context.Context, userID string, req FlightBookR
 	booking := &models.TravelBooking{
 		ID:               uuid.New(),
 		UserID:           wallet.UserID,
+		TransactionID:    txID,
 		Mode:             models.TravelFlight,
 		OperatorCode:     offer.Airline,
 		OperatorName:     offer.Airline,
@@ -371,7 +404,9 @@ func (s *Service) BookFlight(ctx context.Context, userID string, req FlightBookR
 		CreatedAt:        time.Now(),
 		UpdatedAt:        time.Now(),
 	}
-	_ = s.travelRepo.Create(ctx, booking)
+	if err := s.travelRepo.Create(ctx, booking); err != nil {
+		s.log.Error("failed to persist flight booking", zap.Error(err))
+	}
 
 	smsSent := false
 	if req.Passenger.Phone != "" {
@@ -414,6 +449,51 @@ func (s *Service) findFlightOperator(code string) operators.FlightOperator {
 	return nil
 }
 
+func (s *Service) findLiveBusOffer(ctx context.Context, op operators.BusOperator, req BusBookRequest) (*models.BusSearchResult, error) {
+	results, err := op.Search(ctx, operators.BusSearchRequest{
+		Origin:        req.Origin,
+		Destination:   req.Destination,
+		DepartureDate: req.DepartureDate,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("could not validate live bus inventory: %w", err)
+	}
+	for _, result := range results {
+		if result.VehicleRef != req.VehicleRef {
+			continue
+		}
+		if !seatIsAvailable(result.SeatLayout, req.SeatNumber) {
+			return nil, fmt.Errorf("selected seat is no longer available")
+		}
+		if result.PriceKobo <= 0 {
+			return nil, fmt.Errorf("operator returned invalid fare for selected trip")
+		}
+		return &result, nil
+	}
+	return nil, fmt.Errorf("selected trip is no longer available")
+}
+
+func seatIsAvailable(layout []models.SeatRow, seatNumber string) bool {
+	if len(layout) == 0 {
+		return true
+	}
+	for _, row := range layout {
+		for _, seat := range row.Seats {
+			if seat.Number == seatNumber {
+				return seat.Available
+			}
+		}
+	}
+	return false
+}
+
+func firstNonZeroTime(primary, fallback time.Time) time.Time {
+	if !primary.IsZero() {
+		return primary
+	}
+	return fallback
+}
+
 // encodeBusResults / decodeBusResults convert between typed and generic maps for MongoDB.
 func encodeBusResults(results []models.BusSearchResult) []map[string]interface{} {
 	out := make([]map[string]interface{}, len(results))
@@ -421,12 +501,17 @@ func encodeBusResults(results []models.BusSearchResult) []map[string]interface{}
 		out[i] = map[string]interface{}{
 			"operator_code":   r.OperatorCode,
 			"operator_name":   r.OperatorName,
+			"origin":          r.Origin,
+			"destination":     r.Destination,
+			"departure_time":  r.DepartureTime,
+			"arrival_time":    r.ArrivalTime,
 			"price_kobo":      r.PriceKobo,
 			"price_ngn":       r.PriceNGN,
 			"seats_available": r.SeatsAvailable,
 			"vehicle_ref":     r.VehicleRef,
 			"vehicle_class":   r.VehicleClass,
 			"rating":          r.Rating,
+			"seat_layout":     r.SeatLayout,
 		}
 	}
 	return out
@@ -438,11 +523,40 @@ func decodeBusResults(raw []map[string]interface{}) []models.BusSearchResult {
 		out[i] = models.BusSearchResult{
 			OperatorCode: fmt.Sprintf("%v", m["operator_code"]),
 			OperatorName: fmt.Sprintf("%v", m["operator_name"]),
+			Origin:       fmt.Sprintf("%v", m["origin"]),
+			Destination:  fmt.Sprintf("%v", m["destination"]),
 			VehicleRef:   fmt.Sprintf("%v", m["vehicle_ref"]),
 			VehicleClass: fmt.Sprintf("%v", m["vehicle_class"]),
 		}
 		if p, ok := m["price_kobo"].(int64); ok {
 			out[i].PriceKobo = p
+			out[i].PriceNGN = float64(p) / 100
+		}
+		if p, ok := m["price_kobo"].(int32); ok {
+			out[i].PriceKobo = int64(p)
+			out[i].PriceNGN = float64(p) / 100
+		}
+		if p, ok := m["price_kobo"].(float64); ok {
+			out[i].PriceKobo = int64(p)
+			out[i].PriceNGN = p / 100
+		}
+		if seats, ok := m["seats_available"].(int32); ok {
+			out[i].SeatsAvailable = int(seats)
+		}
+		if seats, ok := m["seats_available"].(int64); ok {
+			out[i].SeatsAvailable = int(seats)
+		}
+		if seats, ok := m["seats_available"].(float64); ok {
+			out[i].SeatsAvailable = int(seats)
+		}
+		if rating, ok := m["rating"].(float64); ok {
+			out[i].Rating = rating
+		}
+		if departure, ok := m["departure_time"].(time.Time); ok {
+			out[i].DepartureTime = departure
+		}
+		if arrival, ok := m["arrival_time"].(time.Time); ok {
+			out[i].ArrivalTime = arrival
 		}
 	}
 	return out

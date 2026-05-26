@@ -53,7 +53,7 @@ Flip Bills Go API (Gin)
 | SMS | Termii |
 | Bills provider | Flutterwave client currently wired |
 | Payment webhooks | Flutterwave and Monnify |
-| Travel adapters | GIGM, ABC Transport, Amadeus scaffolds |
+| Travel adapters | GIGM, ABC Transport, Amadeus HTTP adapters |
 | Containers | Docker and Docker Compose |
 | Migrations | golang-migrate compatible SQL files |
 
@@ -348,7 +348,7 @@ curl -X POST http://localhost:8080/api/v1/travel/bus/book \
   }'
 ```
 
-Current limitation: bus and flight operator adapters still include stubbed mapping/booking behavior. They are good for local flow testing, not production inventory.
+Current limitation: GIGM and ABC now make live HTTP calls through a shared partner adapter, but their private endpoint contracts still need to be confirmed against official partner documentation. Amadeus uses the public OAuth, search, pricing, booking, and cancel API flow.
 
 ### Loyalty
 
@@ -415,8 +415,8 @@ curl -X POST http://localhost:8080/webhooks/dispatcher \
 | PRD Area | Gap |
 |---|---|
 | Backup aggregator routing | Engine supports fallback, but current VAS service passes no fallback provider yet |
-| Real partner inventory | GIGM, ABC, and Amadeus adapters are scaffolded but still use placeholder response mapping or stubbed booking steps |
-| Flight GDS | Amadeus auth/search request scaffold exists, but pricing and booking are stubbed |
+| Real partner inventory | GIGM and ABC use live HTTP calls and flexible JSON mapping; endpoint paths and response keys still need official partner verification |
+| Flight GDS | Amadeus OAuth, search, pricing, booking, and cancel flows are implemented; still needs sandbox credential validation |
 | 3-click checkout cross-sell | Core routes exist, but contextual cross-sell recommendations are not implemented |
 | Offline QR storage | Backend returns signed payload; Flutter app still needs local SQLite/Room storage |
 | Production KYC | BVN/NIN fields update locally; no real identity provider integration yet |
@@ -438,12 +438,12 @@ Status: mostly built, needs hardening.
 
 ### Phase 2: Transit and Flight Integration
 
-Status: scaffolded, not production ready.
+Status: started, not production ready.
 
-- Replace GIGM and ABC placeholder mappings with real partner response decoding.
-- Replace hardcoded bus booking price with live price validation from search/hold results.
-- Implement real seat hold, confirm, and cancel calls for bus operators.
-- Complete Amadeus flight offer decoding, pricing, and booking.
+- Confirm GIGM and ABC endpoint paths, authentication headers, and response schemas with partner docs.
+- Validate GIGM and ABC live search, hold, confirm, and cancel calls in sandbox.
+- Persist enough bus search/hold state to avoid repeated live search during booking.
+- Validate Amadeus OAuth, search, pricing, booking, and cancel in sandbox.
 - Persist enough search/offer state to prevent client-side price tampering.
 - Expand booking tests around refunds, failed confirmations, and offline QR verification.
 
