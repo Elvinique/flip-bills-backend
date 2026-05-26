@@ -17,7 +17,11 @@ type GIGMOperator struct {
 }
 
 func NewGIGMOperator(apiKey, baseURL string, log *zap.Logger) *GIGMOperator {
-	return &GIGMOperator{partner: newBusPartnerClient("GIGM", "GIGM Transport", apiKey, baseURL, log)}
+	return NewGIGMOperatorWithConfig(apiKey, BusPartnerConfig{BaseURL: baseURL}, log)
+}
+
+func NewGIGMOperatorWithConfig(apiKey string, config BusPartnerConfig, log *zap.Logger) *GIGMOperator {
+	return &GIGMOperator{partner: newBusPartnerClient("GIGM", "GIGM Transport", apiKey, config, log)}
 }
 
 func (g *GIGMOperator) Code() string { return "GIGM" }

@@ -76,16 +76,28 @@ type ReconciliationConfig struct {
 
 // TravelConfig holds credentials for all transport/GDS partners.
 type TravelConfig struct {
+	UseSandboxBus     bool
 	GIGMAPIKey        string
-	GIGMBaseURL       string
+	GIGMPartner       BusPartnerConfig
 	GIGMDispatcherKey string // SHA-256 pre-hashed API key for Terminal Dispatcher webhook
 	ABCAPIKey         string
-	ABCBaseURL        string
+	ABCPartner        BusPartnerConfig
 	ABCDispatcherKey  string // SHA-256 pre-hashed API key for Terminal Dispatcher webhook
 	AmadeusClientID   string
 	AmadeusSecret     string
 	AmadeusBaseURL    string
 	OfflineQRSecret   string // HMAC secret for QR ticket signing
+}
+
+type BusPartnerConfig struct {
+	BaseURL             string
+	SearchPath          string
+	HoldPath            string
+	ConfirmPath         string
+	CancelPath          string
+	AuthHeader          string
+	AuthScheme          string
+	SecondaryAuthHeader string
 }
 
 func Load() *Config {
@@ -138,16 +150,35 @@ func Load() *Config {
 			TimeoutSeconds: getEnvInt("RECONCILIATION_TIMEOUT_SECONDS", 45),
 		},
 		Travel: TravelConfig{
-			GIGMAPIKey:        getEnv("GIGM_API_KEY", ""),
-			GIGMBaseURL:       getEnv("GIGM_BASE_URL", "https://api.gigm.com/api"),
+			UseSandboxBus: getEnvBool("TRAVEL_USE_SANDBOX_BUS", getEnv("APP_ENV", "development") != "production"),
+			GIGMAPIKey:    getEnv("GIGM_API_KEY", ""),
+			GIGMPartner: BusPartnerConfig{
+				BaseURL:             getEnv("GIGM_BASE_URL", "https://api.gigm.com/api"),
+				SearchPath:          getEnv("GIGM_SEARCH_PATH", "/trips/search"),
+				HoldPath:            getEnv("GIGM_HOLD_PATH", "/seats/hold"),
+				ConfirmPath:         getEnv("GIGM_CONFIRM_PATH", "/bookings/confirm"),
+				CancelPath:          getEnv("GIGM_CANCEL_PATH", "/bookings/cancel"),
+				AuthHeader:          getEnv("GIGM_AUTH_HEADER", "Authorization"),
+				AuthScheme:          getEnv("GIGM_AUTH_SCHEME", "Bearer"),
+				SecondaryAuthHeader: getEnv("GIGM_SECONDARY_AUTH_HEADER", "X-API-Key"),
+			},
 			GIGMDispatcherKey: getEnv("GIGM_DISPATCHER_KEY", ""),
 			ABCAPIKey:         getEnv("ABC_API_KEY", ""),
-			ABCBaseURL:        getEnv("ABC_BASE_URL", "https://api.abctransport.com.ng"),
-			ABCDispatcherKey:  getEnv("ABC_DISPATCHER_KEY", ""),
-			AmadeusClientID:   getEnv("AMADEUS_CLIENT_ID", ""),
-			AmadeusSecret:     getEnv("AMADEUS_CLIENT_SECRET", ""),
-			AmadeusBaseURL:    getEnv("AMADEUS_BASE_URL", "https://test.api.amadeus.com"),
-			OfflineQRSecret:   mustGetEnv("OFFLINE_QR_SECRET"),
+			ABCPartner: BusPartnerConfig{
+				BaseURL:             getEnv("ABC_BASE_URL", "https://api.abctransport.com.ng"),
+				SearchPath:          getEnv("ABC_SEARCH_PATH", "/trips/search"),
+				HoldPath:            getEnv("ABC_HOLD_PATH", "/seats/hold"),
+				ConfirmPath:         getEnv("ABC_CONFIRM_PATH", "/bookings/confirm"),
+				CancelPath:          getEnv("ABC_CANCEL_PATH", "/bookings/cancel"),
+				AuthHeader:          getEnv("ABC_AUTH_HEADER", "Authorization"),
+				AuthScheme:          getEnv("ABC_AUTH_SCHEME", "Bearer"),
+				SecondaryAuthHeader: getEnv("ABC_SECONDARY_AUTH_HEADER", "X-API-Key"),
+			},
+			ABCDispatcherKey: getEnv("ABC_DISPATCHER_KEY", ""),
+			AmadeusClientID:  getEnv("AMADEUS_CLIENT_ID", ""),
+			AmadeusSecret:    getEnv("AMADEUS_CLIENT_SECRET", ""),
+			AmadeusBaseURL:   getEnv("AMADEUS_BASE_URL", "https://test.api.amadeus.com"),
+			OfflineQRSecret:  mustGetEnv("OFFLINE_QR_SECRET"),
 		},
 	}
 }
@@ -171,6 +202,15 @@ func getEnvInt(key string, fallback int) int {
 	if v := os.Getenv(key); v != "" {
 		if n, err := strconv.Atoi(v); err == nil {
 			return n
+		}
+	}
+	return fallback
+}
+
+func getEnvBool(key string, fallback bool) bool {
+	if v := os.Getenv(key); v != "" {
+		if parsed, err := strconv.ParseBool(v); err == nil {
+			return parsed
 		}
 	}
 	return fallback

@@ -92,10 +92,7 @@ func main() {
 	flutterwaveBills := utilitysvc.NewFlutterwaveClient(cfg.Pay.FlutterwaveKey, cfg.Pay.FlutterwaveBaseURL)
 
 	// ── Travel operator adapters ──────────────────────────────────────────────
-	busOperators := []operators.BusOperator{
-		operators.NewGIGMOperator(cfg.Travel.GIGMAPIKey, cfg.Travel.GIGMBaseURL, log),
-		operators.NewABCOperator(cfg.Travel.ABCAPIKey, cfg.Travel.ABCBaseURL, log),
-	}
+	busOperators := buildBusOperators(cfg, log)
 	flightOperators := []operators.FlightOperator{
 		operators.NewAmadeusOperator(
 			cfg.Travel.AmadeusClientID,
@@ -240,4 +237,32 @@ func main() {
 		log.Error("forced shutdown", zap.Error(err))
 	}
 	log.Info("server exited cleanly")
+}
+
+func buildBusOperators(cfg *config.Config, log *zap.Logger) []operators.BusOperator {
+	if cfg.Travel.UseSandboxBus {
+		log.Warn("using sandbox bus operators; set TRAVEL_USE_SANDBOX_BUS=false when partner credentials are ready")
+		return []operators.BusOperator{
+			operators.NewSandboxBusOperator("GIGM", "GIGM Transport Sandbox"),
+			operators.NewSandboxBusOperator("ABC", "ABC Transport Sandbox"),
+		}
+	}
+
+	return []operators.BusOperator{
+		operators.NewGIGMOperatorWithConfig(cfg.Travel.GIGMAPIKey, busPartnerConfig(cfg.Travel.GIGMPartner), log),
+		operators.NewABCOperatorWithConfig(cfg.Travel.ABCAPIKey, busPartnerConfig(cfg.Travel.ABCPartner), log),
+	}
+}
+
+func busPartnerConfig(cfg config.BusPartnerConfig) operators.BusPartnerConfig {
+	return operators.BusPartnerConfig{
+		BaseURL:             cfg.BaseURL,
+		SearchPath:          cfg.SearchPath,
+		HoldPath:            cfg.HoldPath,
+		ConfirmPath:         cfg.ConfirmPath,
+		CancelPath:          cfg.CancelPath,
+		AuthHeader:          cfg.AuthHeader,
+		AuthScheme:          cfg.AuthScheme,
+		SecondaryAuthHeader: cfg.SecondaryAuthHeader,
+	}
 }

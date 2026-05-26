@@ -103,7 +103,7 @@ flip-bills-backend/
 
 ### 1. Configure environment
 
-Create a `.env` file in the repository root. There is no committed `.env.example` yet, so use the variables below as the source of truth.
+Create a `.env` file in the repository root by copying the committed `.env.example` file and filling in any missing secrets.
 
 Required:
 
@@ -139,10 +139,25 @@ TERMII_BASE_URL=https://api.ng.termii.com
 RECONCILIATION_TIMEOUT_SECONDS=45
 GIGM_API_KEY=
 GIGM_BASE_URL=https://api.gigm.com/api
+GIGM_SEARCH_PATH=/trips/search
+GIGM_HOLD_PATH=/seats/hold
+GIGM_CONFIRM_PATH=/bookings/confirm
+GIGM_CANCEL_PATH=/bookings/cancel
+GIGM_AUTH_HEADER=Authorization
+GIGM_AUTH_SCHEME=Bearer
+GIGM_SECONDARY_AUTH_HEADER=X-API-Key
 GIGM_DISPATCHER_KEY=
 ABC_API_KEY=
 ABC_BASE_URL=https://api.abctransport.com.ng
+ABC_SEARCH_PATH=/trips/search
+ABC_HOLD_PATH=/seats/hold
+ABC_CONFIRM_PATH=/bookings/confirm
+ABC_CANCEL_PATH=/bookings/cancel
+ABC_AUTH_HEADER=Authorization
+ABC_AUTH_SCHEME=Bearer
+ABC_SECONDARY_AUTH_HEADER=X-API-Key
 ABC_DISPATCHER_KEY=
+TRAVEL_USE_SANDBOX_BUS=true
 AMADEUS_CLIENT_ID=
 AMADEUS_CLIENT_SECRET=
 AMADEUS_BASE_URL=https://test.api.amadeus.com
@@ -348,7 +363,7 @@ curl -X POST http://localhost:8080/api/v1/travel/bus/book \
   }'
 ```
 
-Current limitation: GIGM and ABC now make live HTTP calls through a shared partner adapter, but their private endpoint contracts still need to be confirmed against official partner documentation. Amadeus uses the public OAuth, search, pricing, booking, and cancel API flow.
+Current limitation: local development uses sandbox bus operators by default through `TRAVEL_USE_SANDBOX_BUS=true`. Set it to `false` once GIGM/ABC provide endpoint contracts and credentials. The real GIGM/ABC adapters make live HTTP calls through a configurable shared partner adapter; see `docs/travel_partner_validation.md`. Amadeus uses the public OAuth, search, pricing, booking, and cancel API flow; see `docs/amadeus_sandbox_validation.md`.
 
 ### Loyalty
 
@@ -415,8 +430,8 @@ curl -X POST http://localhost:8080/webhooks/dispatcher \
 | PRD Area | Gap |
 |---|---|
 | Backup aggregator routing | Engine supports fallback, but current VAS service passes no fallback provider yet |
-| Real partner inventory | GIGM and ABC use live HTTP calls and flexible JSON mapping; endpoint paths and response keys still need official partner verification |
-| Flight GDS | Amadeus OAuth, search, pricing, booking, and cancel flows are implemented; still needs sandbox credential validation |
+| Real partner inventory | Local sandbox bus operators are available behind the same interface; GIGM and ABC use configurable live HTTP adapters pending official partner verification |
+| Flight GDS | Amadeus OAuth, search, pricing, booking, and cancel flows are implemented with local and opt-in sandbox validation tests; still needs real sandbox credentials |
 | 3-click checkout cross-sell | Core routes exist, but contextual cross-sell recommendations are not implemented |
 | Offline QR storage | Backend returns signed payload; Flutter app still needs local SQLite/Room storage |
 | Production KYC | BVN/NIN fields update locally; no real identity provider integration yet |
@@ -440,12 +455,12 @@ Status: mostly built, needs hardening.
 
 Status: started, not production ready.
 
-- Confirm GIGM and ABC endpoint paths, authentication headers, and response schemas with partner docs.
+- Confirm GIGM and ABC endpoint paths, authentication headers, and response schemas with partner docs. Config and opt-in sandbox tests are ready.
 - Validate GIGM and ABC live search, hold, confirm, and cancel calls in sandbox.
 - Persist enough bus search/hold state to avoid repeated live search during booking.
-- Validate Amadeus OAuth, search, pricing, booking, and cancel in sandbox.
+- Validate Amadeus OAuth, search, pricing, and optional booking in sandbox with real Self-Service credentials.
 - Persist enough search/offer state to prevent client-side price tampering.
-- Expand booking tests around refunds, failed confirmations, and offline QR verification.
+- Expand service-level booking tests around refunds, failed confirmations, and offline QR verification.
 
 ### Phase 3: B2B Dispatcher Portal and Optimization
 

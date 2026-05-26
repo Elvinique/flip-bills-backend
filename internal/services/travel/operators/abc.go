@@ -17,7 +17,11 @@ type ABCOperator struct {
 }
 
 func NewABCOperator(apiKey, baseURL string, log *zap.Logger) *ABCOperator {
-	return &ABCOperator{partner: newBusPartnerClient("ABC", "ABC Transport", apiKey, baseURL, log)}
+	return NewABCOperatorWithConfig(apiKey, BusPartnerConfig{BaseURL: baseURL}, log)
+}
+
+func NewABCOperatorWithConfig(apiKey string, config BusPartnerConfig, log *zap.Logger) *ABCOperator {
+	return &ABCOperator{partner: newBusPartnerClient("ABC", "ABC Transport", apiKey, config, log)}
 }
 
 func (a *ABCOperator) Code() string { return "ABC" }

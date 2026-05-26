@@ -32,6 +32,45 @@ type FlutterwaveClient struct {
 	httpClient *http.Client
 }
 
+type FlutterwavePaymentRequest struct {
+	TxRef         string  `json:"tx_ref"`
+	Amount        float64 `json:"amount"` // NGN
+	Currency      string  `json:"currency"`
+	RedirectURL   string  `json:"redirect_url"`
+	CustomerEmail string
+	CustomerPhone string
+	CustomerName  string
+	UserID        string
+}
+
+type flutterwavePaymentPayload struct {
+	TxRef       string `json:"tx_ref"`
+	Amount      string `json:"amount"` // Flutterwave takes string for amount here often, but float or string works
+	Currency    string `json:"currency"`
+	RedirectURL string `json:"redirect_url"`
+	Customer    struct {
+		Email       string `json:"email"`
+		PhoneNumber string `json:"phonenumber"`
+		Name        string `json:"name"`
+	} `json:"customer"`
+	Meta struct {
+		UserID string `json:"user_id"`
+	} `json:"meta"`
+	Customizations struct {
+		Title       string `json:"title"`
+		Description string `json:"description"`
+		Logo        string `json:"logo"`
+	} `json:"customizations"`
+}
+
+type FlutterwavePaymentResponse struct {
+	Status  string `json:"status"`
+	Message string `json:"message"`
+	Data    struct {
+		Link string `json:"link"`
+	} `json:"data"`
+}
+
 type FlutterwaveBillRequest struct {
 	Category   models.ServiceCategory
 	Reference  string
@@ -184,6 +223,40 @@ func (c *FlutterwaveClient) CheckBillStatus(ctx context.Context, reference strin
 		return nil, fmt.Errorf("flutterwave bill status check failed: %s", response.Message)
 	}
 	return &response, nil
+}
+
+// InitializePayment creates a standard checkout link for wallet funding
+func (c *FlutterwaveClient) InitializePayment(ctx context.Context, req FlutterwavePaymentRequest) (*FlutterwavePaymentResponse, error) {
+	if err := c.validate(); err != nil {
+		return nil, err
+	}
+	if req.TxRef == "" || req.Amount <= 0 {
+		return nil, fmt.Errorf("invalid payment request")
+	}
+
+	payload := flutterwavePaymentPayload{
+		TxRef:       req.TxRef,
+		Amount:      fmt.Sprintf("%.2f", req.Amount),
+		Currency:    req.Currency,
+		RedirectURL: req.RedirectURL,
+	}
+	payload.Customer.Email = req.CustomerEmail
+	payload.Customer.PhoneNumber = req.CustomerPhone
+	payload.Customer.Name = req.CustomerName
+	payload.Meta.UserID = req.UserID
+	payload.Customizations.Title = "Flip Bills Wallet Funding"
+	payload.Customizations.Description = "Fund your Flip Bills wallet"
+
+	var resp FlutterwavePaymentResponse
+	if err := c.do(ctx, http.MethodPost, "/payments", payload, &resp); err != nil {
+		return nil, err
+	}
+
+	if resp.Status != "success" {
+		return nil, fmt.Errorf("flutterwave payment initialization failed: %s", resp.Message)
+	}
+
+	return &resp, nil
 }
 
 func (c *FlutterwaveClient) FetchCatalog(ctx context.Context) (*FlutterwaveCatalog, error) {

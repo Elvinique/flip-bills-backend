@@ -17,23 +17,64 @@ import (
 )
 
 type busPartnerClient struct {
-	code    string
-	name    string
-	apiKey  string
-	baseURL string
-	client  *http.Client
-	log     *zap.Logger
+	code   string
+	name   string
+	apiKey string
+	config BusPartnerConfig
+	client *http.Client
+	log    *zap.Logger
 }
 
-func newBusPartnerClient(code, name, apiKey, baseURL string, log *zap.Logger) busPartnerClient {
-	return busPartnerClient{
-		code:    code,
-		name:    name,
-		apiKey:  apiKey,
-		baseURL: strings.TrimRight(baseURL, "/"),
-		client:  &http.Client{Timeout: 20 * time.Second},
-		log:     log,
+type BusPartnerConfig struct {
+	BaseURL             string
+	SearchPath          string
+	HoldPath            string
+	ConfirmPath         string
+	CancelPath          string
+	AuthHeader          string
+	AuthScheme          string
+	SecondaryAuthHeader string
+}
+
+func newBusPartnerClient(code, name, apiKey string, config BusPartnerConfig, log *zap.Logger) busPartnerClient {
+	config = config.withDefaults()
+	if log == nil {
+		log = zap.NewNop()
 	}
+	return busPartnerClient{
+		code:   code,
+		name:   name,
+		apiKey: apiKey,
+		config: config,
+		client: &http.Client{Timeout: 20 * time.Second},
+		log:    log,
+	}
+}
+
+func (c BusPartnerConfig) withDefaults() BusPartnerConfig {
+	c.BaseURL = strings.TrimRight(c.BaseURL, "/")
+	if c.SearchPath == "" {
+		c.SearchPath = "/trips/search"
+	}
+	if c.HoldPath == "" {
+		c.HoldPath = "/seats/hold"
+	}
+	if c.ConfirmPath == "" {
+		c.ConfirmPath = "/bookings/confirm"
+	}
+	if c.CancelPath == "" {
+		c.CancelPath = "/bookings/cancel"
+	}
+	if c.AuthHeader == "" {
+		c.AuthHeader = "Authorization"
+	}
+	if c.AuthScheme == "" {
+		c.AuthScheme = "Bearer"
+	}
+	if c.SecondaryAuthHeader == "" {
+		c.SecondaryAuthHeader = "X-API-Key"
+	}
+	return c
 }
 
 func (c *busPartnerClient) search(ctx context.Context, req BusSearchRequest) ([]models.BusSearchResult, error) {
@@ -47,7 +88,7 @@ func (c *busPartnerClient) search(ctx context.Context, req BusSearchRequest) ([]
 	}
 
 	var raw map[string]interface{}
-	if err := c.postJSON(ctx, "/trips/search", payload, &raw); err != nil {
+	if err := c.postJSON(ctx, c.config.SearchPath, payload, &raw); err != nil {
 		return nil, err
 	}
 
@@ -82,7 +123,7 @@ func (c *busPartnerClient) hold(ctx context.Context, vehicleRef, seatNumber stri
 	}
 
 	var raw map[string]interface{}
-	if err := c.postJSON(ctx, "/seats/hold", payload, &raw); err != nil {
+	if err := c.postJSON(ctx, c.config.HoldPath, payload, &raw); err != nil {
 		return "", err
 	}
 
@@ -110,7 +151,7 @@ func (c *busPartnerClient) confirm(ctx context.Context, holdRef string, passenge
 	}
 
 	var raw map[string]interface{}
-	if err := c.postJSON(ctx, "/bookings/confirm", payload, &raw); err != nil {
+	if err := c.postJSON(ctx, c.config.ConfirmPath, payload, &raw); err != nil {
 		return "", err
 	}
 
@@ -131,11 +172,11 @@ func (c *busPartnerClient) cancel(ctx context.Context, ticketCode string) error 
 		"booking_reference": ticketCode,
 	}
 	var raw map[string]interface{}
-	return c.postJSON(ctx, "/bookings/cancel", payload, &raw)
+	return c.postJSON(ctx, c.config.CancelPath, payload, &raw)
 }
 
 func (c *busPartnerClient) postJSON(ctx context.Context, path string, payload interface{}, out interface{}) error {
-	if c.baseURL == "" {
+	if c.config.BaseURL == "" {
 		return fmt.Errorf("%s base URL is not configured", c.code)
 	}
 
@@ -144,15 +185,21 @@ func (c *busPartnerClient) postJSON(ctx context.Context, path string, payload in
 		return err
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+path, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.config.BaseURL+path, bytes.NewReader(body))
 	if err != nil {
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 	if c.apiKey != "" {
-		req.Header.Set("Authorization", "Bearer "+c.apiKey)
-		req.Header.Set("X-API-Key", c.apiKey)
+		if c.config.AuthScheme != "" {
+			req.Header.Set(c.config.AuthHeader, c.config.AuthScheme+" "+c.apiKey)
+		} else {
+			req.Header.Set(c.config.AuthHeader, c.apiKey)
+		}
+		if c.config.SecondaryAuthHeader != "" {
+			req.Header.Set(c.config.SecondaryAuthHeader, c.apiKey)
+		}
 	}
 
 	resp, err := c.client.Do(req)
