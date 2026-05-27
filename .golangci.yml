@@ -1,0 +1,41 @@
+version: "2"
+
+linters:
+  enable:
+    - errcheck
+    - gosimple
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+    - gofmt
+    - goimports
+    - misspell
+    - unconvert
+    - unparam
+  disable:
+    - exhaustruct
+    - wrapcheck
+    - gomnd
+    - funlen
+    - cyclop
+
+linters-settings:
+  goimports:
+    local-prefixes: github.com/flip-bills/backend
+  misspell:
+    locale: US
+
+issues:
+  exclude-rules:
+    # Test files have more relaxed rules
+    - path: _test\.go
+      linters:
+        - errcheck
+        - unparam
+    # Main wiring file can be long
+    - path: cmd/api/main\.go
+      linters:
+        - funlen
+  max-issues-per-linter: 50
+  max-same-issues: 10
