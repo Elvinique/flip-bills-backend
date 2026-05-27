@@ -50,15 +50,15 @@ func NewTravelCacheRepository(db *mongo.Database) *TravelCacheRepository {
 // ensureIndexes creates TTL and lookup indexes on startup.
 func (r *TravelCacheRepository) ensureIndexes(ctx context.Context) {
 	// TTL index — MongoDB auto-deletes expired search cache docs.
-	r.searchCache.Indexes().CreateOne(ctx, mongo.IndexModel{
+	_, _ = r.searchCache.Indexes().CreateOne(ctx, mongo.IndexModel{
 		Keys:    bson.D{{Key: "expires_at", Value: 1}},
 		Options: options.Index().SetExpireAfterSeconds(0),
 	})
-	r.searchCache.Indexes().CreateOne(ctx, mongo.IndexModel{
+	_, _ = r.searchCache.Indexes().CreateOne(ctx, mongo.IndexModel{
 		Keys:    bson.D{{Key: "cache_key", Value: 1}},
 		Options: options.Index().SetUnique(true),
 	})
-	r.operatorPayloads.Indexes().CreateOne(ctx, mongo.IndexModel{
+	_, _ = r.operatorPayloads.Indexes().CreateOne(ctx, mongo.IndexModel{
 		Keys: bson.D{{Key: "booking_id", Value: 1}},
 	})
 }

@@ -25,7 +25,7 @@ func (r *OTPRepository) Create(ctx context.Context, otp *models.OTPToken) error 
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	// Invalidate previous unused tokens for this phone + purpose.
 	_, err = tx.Exec(ctx,

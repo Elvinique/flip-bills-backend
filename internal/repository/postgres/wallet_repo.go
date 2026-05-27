@@ -62,7 +62,7 @@ func (r *WalletRepository) DebitWithLock(ctx context.Context, userID string, amo
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	var w models.Wallet
 	err = tx.QueryRow(ctx,
@@ -149,7 +149,7 @@ func (r *WalletRepository) ReverseDebitIfNeeded(ctx context.Context, original *m
 	if err != nil {
 		return false, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	var existingID uuid.UUID
 	err = tx.QueryRow(ctx,
@@ -301,7 +301,7 @@ func (r *WalletRepository) CreditWithTransaction(ctx context.Context, walletID u
 	if err != nil {
 		return err
 	}
-	defer dbTx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	// 1. Credit balance.
 	_, err = dbTx.Exec(ctx,

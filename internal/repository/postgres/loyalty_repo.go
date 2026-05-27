@@ -69,7 +69,7 @@ func (r *LoyaltyRepository) EarnPoints(
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	// Lock and fetch account.
 	var acc models.LoyaltyAccount
@@ -142,7 +142,7 @@ func (r *LoyaltyRepository) RedeemPoints(
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	var acc models.LoyaltyAccount
 	err = tx.QueryRow(ctx,

@@ -42,7 +42,7 @@ import (
 func main() {
 	cfg := config.Load()
 	log := logger.New(cfg.AppEnv)
-	defer log.Sync()
+	defer func() { _ = log.Sync() }()
 	log.Info("starting Flip Bills API", zap.String("env", cfg.AppEnv))
 
 	// ── PostgreSQL ────────────────────────────────────────────────────────────
