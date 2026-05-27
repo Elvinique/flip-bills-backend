@@ -34,7 +34,7 @@ type FlutterwaveClient struct {
 
 type FlutterwavePaymentRequest struct {
 	TxRef         string  `json:"tx_ref"`
-	Amount        float64 `json:"amount"` // NGN
+	Amount        float64 `json:"amount"`
 	Currency      string  `json:"currency"`
 	RedirectURL   string  `json:"redirect_url"`
 	CustomerEmail string
@@ -45,7 +45,7 @@ type FlutterwavePaymentRequest struct {
 
 type flutterwavePaymentPayload struct {
 	TxRef       string `json:"tx_ref"`
-	Amount      string `json:"amount"` // Flutterwave takes string for amount here often, but float or string works
+	Amount      string `json:"amount"`
 	Currency    string `json:"currency"`
 	RedirectURL string `json:"redirect_url"`
 	Customer    struct {
@@ -193,8 +193,57 @@ func (c *FlutterwaveClient) PurchaseBill(ctx context.Context, req FlutterwaveBil
 		"type":        flutterwaveBillType(req.Category, req.Meta),
 		"reference":   req.Reference,
 	}
+
+	// For data bundles, Flutterwave requires biller_code and item_code
+	// explicitly in the payload — spread meta fields in first, then
+	// override with canonical keys to ensure correct field names.
 	for key, value := range req.Meta {
+		// Skip internal fields that are not Flutterwave payload fields.
+		switch key {
+		case "plan_code", "network", "meter_type", "platform":
+			continue
+		}
 		payload[key] = value
+	}
+
+	// Canonical overrides for data bundle fields.
+	if req.Category == models.CategoryData {
+		if itemCode := stringFromMeta(req.Meta, "item_code"); itemCode != "" {
+			payload["item_code"] = itemCode
+		} else if planCode := stringFromMeta(req.Meta, "plan_code"); planCode != "" {
+			// Fallback: treat plan_code as item_code for backward compatibility.
+			payload["item_code"] = planCode
+		}
+		if billerCode := stringFromMeta(req.Meta, "biller_code"); billerCode != "" {
+			payload["biller_code"] = billerCode
+		}
+		// Flutterwave data bundles use the phone as customer field.
+		if phone := stringFromMeta(req.Meta, "phone"); phone != "" {
+			payload["customer"] = phone
+			payload["customer_id"] = phone
+		}
+	}
+
+	// Electricity: meter number is the customer identifier.
+	if req.Category == models.CategoryElectricity {
+		if meterNumber := stringFromMeta(req.Meta, "meter_number"); meterNumber != "" {
+			payload["customer"] = meterNumber
+			payload["customer_id"] = meterNumber
+		}
+		if billerCode := stringFromMeta(req.Meta, "biller_code"); billerCode != "" {
+			payload["biller_code"] = billerCode
+		}
+	}
+
+	// Betting: customer_id is the betting account ID.
+	if req.Category == models.CategoryBetting {
+		if customerID := stringFromMeta(req.Meta, "customer_id"); customerID != "" {
+			payload["customer"] = customerID
+			payload["customer_id"] = customerID
+		}
+		if billerCode := stringFromMeta(req.Meta, "biller_code"); billerCode != "" {
+			payload["biller_code"] = billerCode
+		}
 	}
 
 	var response FlutterwaveBillResponse
@@ -225,7 +274,7 @@ func (c *FlutterwaveClient) CheckBillStatus(ctx context.Context, reference strin
 	return &response, nil
 }
 
-// InitializePayment creates a standard checkout link for wallet funding
+// InitializePayment creates a standard checkout link for wallet funding.
 func (c *FlutterwaveClient) InitializePayment(ctx context.Context, req FlutterwavePaymentRequest) (*FlutterwavePaymentResponse, error) {
 	if err := c.validate(); err != nil {
 		return nil, err
@@ -251,11 +300,9 @@ func (c *FlutterwaveClient) InitializePayment(ctx context.Context, req Flutterwa
 	if err := c.do(ctx, http.MethodPost, "/payments", payload, &resp); err != nil {
 		return nil, err
 	}
-
 	if resp.Status != "success" {
 		return nil, fmt.Errorf("flutterwave payment initialization failed: %s", resp.Message)
 	}
-
 	return &resp, nil
 }
 
@@ -371,9 +418,6 @@ func flutterwaveBillType(category models.ServiceCategory, meta map[string]interf
 	case models.CategoryData:
 		return "MOBILEDATA"
 	case models.CategoryElectricity:
-		if meterType, ok := meta["meter_type"].(string); ok && strings.EqualFold(meterType, "postpaid") {
-			return "UTILITYBILLS"
-		}
 		return "UTILITYBILLS"
 	case models.CategoryBetting:
 		return "BETTING"

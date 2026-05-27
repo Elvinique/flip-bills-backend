@@ -33,11 +33,12 @@ type AirtimeRequest struct {
 }
 
 type DataRequest struct {
-	Phone           string `json:"phone"           binding:"required"`
-	PlanCode        string `json:"plan_code"       binding:"required"`
-	Network         string `json:"network"         binding:"required,oneof=MTN GLO AIRTEL 9MOBILE"`
-	Amount          int64  `json:"amount"          binding:"required,min=50"`
-	TransactionPIN  string `json:"transaction_pin" binding:"required,len=6,numeric"`
+	Phone           string `json:"phone"            binding:"required"`
+	PlanCode        string `json:"plan_code"        binding:"required"`
+	BillerCode      string `json:"biller_code"      binding:"required"`
+	Network         string `json:"network"          binding:"required,oneof=MTN GLO AIRTEL 9MOBILE"`
+	Amount          int64  `json:"amount"           binding:"required,min=1000"`
+	TransactionPIN  string `json:"transaction_pin"  binding:"required,len=6,numeric"`
 	ClientReference string `json:"client_reference" binding:"omitempty,max=60"`
 }
 
@@ -101,7 +102,6 @@ func (s *Service) PurchaseAirtime(ctx context.Context, userID string, req Airtim
 	if err := s.validateTransactionPIN(ctx, userID, req.TransactionPIN); err != nil {
 		return nil, err
 	}
-
 	return s.executeVAS(ctx, userID, models.CategoryAirtime, req.Amount,
 		fmt.Sprintf("Airtime %s — %s", req.Network, req.Phone),
 		map[string]interface{}{"phone": req.Phone, "network": req.Network},
@@ -116,7 +116,13 @@ func (s *Service) PurchaseData(ctx context.Context, userID string, req DataReque
 
 	return s.executeVAS(ctx, userID, models.CategoryData, req.Amount,
 		fmt.Sprintf("Data %s — %s", req.PlanCode, req.Phone),
-		map[string]interface{}{"phone": req.Phone, "network": req.Network, "plan_code": req.PlanCode},
+		map[string]interface{}{
+			"phone":       req.Phone,
+			"network":     req.Network,
+			"plan_code":   req.PlanCode,
+			"item_code":   req.PlanCode,   // Flutterwave item_code e.g. MD492
+			"biller_code": req.BillerCode, // Flutterwave biller_code e.g. BIL108
+		},
 		req.ClientReference,
 	)
 }
