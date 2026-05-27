@@ -290,3 +290,42 @@ func (r *WalletRepository) ListTransactions(ctx context.Context, userID string, 
 	}
 	return txs, total, rows.Err()
 }
+
+// CreditWithTransaction atomically credits the wallet balance AND inserts the
+// transaction ledger entry in a single database transaction.
+// This replaces the two-step CreditBalance + InsertTransaction pattern in
+// FundWallet and prevents a crash between the two writes from leaving
+// money credited with no audit record.
+func (r *WalletRepository) CreditWithTransaction(ctx context.Context, walletID uuid.UUID, tx *models.Transaction) error {
+	dbTx, err := r.db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer dbTx.Rollback(ctx)
+
+	// 1. Credit balance.
+	_, err = dbTx.Exec(ctx,
+		`UPDATE wallets SET balance=balance+$1, updated_at=NOW() WHERE id=$2`,
+		tx.Amount, walletID,
+	)
+	if err != nil {
+		return fmt.Errorf("credit balance: %w", err)
+	}
+
+	// 2. Insert ledger entry — same transaction, guaranteed to succeed or both roll back.
+	_, err = dbTx.Exec(ctx,
+		`INSERT INTO transactions
+		 (id,user_id,wallet_id,reference,external_ref,type,category,amount,fee,
+		  balance_before,balance_after,status,provider,narration,meta,reversed_tx_id,created_at,updated_at)
+		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`,
+		tx.ID, tx.UserID, tx.WalletID, tx.Reference, tx.ExternalRef,
+		tx.Type, tx.Category, tx.Amount, tx.Fee,
+		tx.BalanceBefore, tx.BalanceAfter, tx.Status, tx.Provider,
+		tx.Narration, tx.Meta, tx.ReversedTxID, tx.CreatedAt, tx.UpdatedAt,
+	)
+	if err != nil {
+		return fmt.Errorf("insert transaction: %w", err)
+	}
+
+	return dbTx.Commit(ctx)
+}

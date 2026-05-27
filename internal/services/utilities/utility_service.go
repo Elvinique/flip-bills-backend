@@ -77,13 +77,14 @@ func (e *RiskChallengeError) Error() string {
 // ── Service ───────────────────────────────────────────────────────────────────
 
 type Service struct {
-	walletRepo *postgres.WalletRepository
-	userRepo   *postgres.UserRepository
-	recon      *reconciliation.Engine
-	loyaltySvc *loyalty.Service
-	sms        *notifications.SMSService
-	bills      BillProvider
-	log        *zap.Logger
+	walletRepo   *postgres.WalletRepository
+	userRepo     *postgres.UserRepository
+	recon        *reconciliation.Engine
+	loyaltySvc   *loyalty.Service
+	sms          *notifications.SMSService
+	bills        BillProvider
+	fallbackBills BillProvider // Monnify — used when primary (Flutterwave) fails
+	log          *zap.Logger
 }
 
 func NewService(
@@ -93,9 +94,10 @@ func NewService(
 	loyaltySvc *loyalty.Service,
 	sms *notifications.SMSService,
 	bills BillProvider,
+	fallbackBills BillProvider,
 	log *zap.Logger,
 ) *Service {
-	return &Service{walletRepo: walletRepo, userRepo: userRepo, recon: recon, loyaltySvc: loyaltySvc, sms: sms, bills: bills, log: log}
+	return &Service{walletRepo: walletRepo, userRepo: userRepo, recon: recon, loyaltySvc: loyaltySvc, sms: sms, bills: bills, fallbackBills: fallbackBills, log: log}
 }
 
 func (s *Service) PurchaseAirtime(ctx context.Context, userID string, req AirtimeRequest) (*models.Transaction, error) {
@@ -246,7 +248,7 @@ func (s *Service) executeVAS(
 			billToken = extractBillToken(resp, status)
 			return extRef, nil
 		},
-		nil,
+		s.buildFallbackCall(ctx, ref, category, amount, meta, &billReceiptMeta, &billToken),
 	)
 	if reconErr != nil {
 		s.sendVASRefundAlert(userID, tx)
@@ -504,6 +506,45 @@ func (s *Service) sendVASSuccessAlert(userID string, tx *models.Transaction, tok
 			s.log.Warn("VAS success SMS failed", zap.String("ref", tx.Reference), zap.Error(err))
 		}
 	}()
+}
+
+// buildFallbackCall returns a BillerCallFn for the Monnify fallback provider,
+// or nil if Monnify is not configured. Returning nil tells the engine to
+// reverse and stop rather than attempt a second provider.
+func (s *Service) buildFallbackCall(
+	_ context.Context,
+	ref string,
+	category models.ServiceCategory,
+	amount int64,
+	meta map[string]interface{},
+	receiptMeta *[]byte,
+	billToken *string,
+) reconciliation.BillerCallFn {
+	if s.fallbackBills == nil {
+		return nil
+	}
+	return func(c context.Context) (string, error) {
+		s.log.Info("calling Monnify fallback bills api", zap.String("ref", ref))
+		fallbackRef := ref + "_FB"
+		resp, err := s.fallbackBills.PurchaseBill(c, FlutterwaveBillRequest{
+			Category:   category,
+			Reference:  fallbackRef,
+			CustomerID: flutterwaveCustomerID(category, meta),
+			Amount:     amount,
+			Meta:       meta,
+		})
+		if err != nil {
+			return "", err
+		}
+		extRef := flutterwaveExternalRef(resp)
+		status, err := s.fallbackBills.CheckBillStatus(c, fallbackRef)
+		if err != nil {
+			return extRef, nil // fallback succeeded even if status check fails
+		}
+		*receiptMeta = buildBillReceiptMeta(meta, resp, status)
+		*billToken = extractBillToken(resp, status)
+		return extRef, nil
+	}
 }
 
 func (s *Service) sendVASRefundAlert(userID string, tx *models.Transaction) {

@@ -24,7 +24,8 @@ func (r *UserRepository) Create(ctx context.Context, u *models.User) error {
 		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
 		u.ID, u.Phone, nullableString(u.Email), u.PasswordHash,
 		u.FirstName, u.LastName, u.KYCTier,
-		u.BVN, u.NIN, u.IsActive, u.PinHash,
+		nullableString(u.BVN), nullableString(u.NIN),
+		u.IsActive, nullableString(u.PinHash),
 		u.CreatedAt, u.UpdatedAt,
 	)
 	return err
@@ -76,21 +77,34 @@ type scannable interface {
 
 func scanUser(row scannable) (*models.User, error) {
 	u := &models.User{}
+	var email, bvn, nin, pinHash *string
 	err := row.Scan(
-		&u.ID, &u.Phone, &u.Email, &u.PasswordHash,
+		&u.ID, &u.Phone, &email, &u.PasswordHash,
 		&u.FirstName, &u.LastName, &u.KYCTier,
-		&u.BVN, &u.NIN, &u.IsActive, &u.PinHash,
+		&bvn, &nin, &u.IsActive, &pinHash,
 		&u.CreatedAt, &u.UpdatedAt,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("scan user: %w", err)
 	}
+	if email != nil {
+		u.Email = *email
+	}
+	if bvn != nil {
+		u.BVN = *bvn
+	}
+	if nin != nil {
+		u.NIN = *nin
+	}
+	if pinHash != nil {
+		u.PinHash = *pinHash
+	}
 	return u, nil
 }
-// nullableString converts an empty string to nil for nullable DB columns.
+
 func nullableString(s string) interface{} {
-    if s == "" {
-        return nil
-    }
-    return s
+	if s == "" {
+		return nil
+	}
+	return s
 }

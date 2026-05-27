@@ -68,8 +68,15 @@ type Service struct {
 	walletRepo      *postgres.WalletRepository
 	cacheRepo       *mongo.TravelCacheRepository
 	sms             *notifications.SMSService
+	loyaltySvc      loyaltyIface
 	qrSecret        string
 	log             *zap.Logger
+}
+
+// loyaltyIface avoids an import cycle — travel → loyalty → models is fine,
+// but we define the minimal surface we need here.
+type loyaltyIface interface {
+	AwardPoints(ctx context.Context, userID string, sourceTxID uuid.UUID, category models.ServiceCategory, amountKobo int64)
 }
 
 func NewService(
@@ -79,6 +86,7 @@ func NewService(
 	walletRepo *postgres.WalletRepository,
 	cacheRepo *mongo.TravelCacheRepository,
 	sms *notifications.SMSService,
+	loyaltySvc loyaltyIface,
 	qrSecret string,
 	log *zap.Logger,
 ) *Service {
@@ -89,6 +97,7 @@ func NewService(
 		walletRepo:      walletRepo,
 		cacheRepo:       cacheRepo,
 		sms:             sms,
+		loyaltySvc:      loyaltySvc,
 		qrSecret:        qrSecret,
 		log:             log,
 	}
@@ -316,6 +325,11 @@ func (s *Service) BookBus(ctx context.Context, userID string, req BusBookRequest
 		smsSent = err == nil
 	}
 
+	// 9. Award loyalty points — non-blocking, never fails the parent booking.
+	if s.loyaltySvc != nil {
+		go s.loyaltySvc.AwardPoints(context.Background(), userID, txID, models.CategoryBusTravel, priceKobo)
+	}
+
 	return &BookingResponse{
 		Booking:   booking,
 		OfflineQR: qrPayload,
@@ -414,6 +428,11 @@ func (s *Service) BookFlight(ctx context.Context, userID string, req FlightBookR
 			fmt.Sprintf("%s → %s", offer.Origin, offer.Destination),
 			offer.DepartureTime.Format("Mon 02 Jan 2006, 03:04 PM"))
 		smsSent = err == nil
+	}
+
+	// Award loyalty points — non-blocking.
+	if s.loyaltySvc != nil {
+		go s.loyaltySvc.AwardPoints(context.Background(), userID, booking.TransactionID, models.CategoryFlight, offer.PriceKobo)
 	}
 
 	return &BookingResponse{Booking: booking, OfflineQR: qrPayload, SMSSent: smsSent}, nil

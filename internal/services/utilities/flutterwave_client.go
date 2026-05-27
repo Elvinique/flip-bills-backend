@@ -1,8 +1,10 @@
 package utilities
 
 import (
+	"go.uber.org/zap"
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -477,4 +479,148 @@ func (i FlutterwaveBillItem) AmountKobo() int64 {
 		}
 	}
 	return 0
+}
+
+// ── Monnify fallback provider ─────────────────────────────────────────────────
+// MonnifyFallbackClient satisfies BillProvider as a secondary aggregator.
+// The engine calls this automatically when Flutterwave times out or errors
+// (PRD Section 3A — "swapping instantly from Interswitch to Flutterwave or Monnify").
+// Full Monnify Bills API: https://developers.monnify.com/api/#bills
+type MonnifyFallbackClient struct {
+	apiKey    string
+	secretKey string
+	baseURL   string
+	client    *http.Client
+	log       *zap.Logger
+}
+
+func NewMonnifyFallbackClient(apiKey, secretKey, baseURL string, log *zap.Logger) *MonnifyFallbackClient {
+	return &MonnifyFallbackClient{
+		apiKey:    apiKey,
+		secretKey: secretKey,
+		baseURL:   baseURL,
+		client:    &http.Client{Timeout: 20 * time.Second},
+		log:       log,
+	}
+}
+
+// PurchaseBill maps a Flutterwave-shaped request to Monnify's bills endpoint.
+// The normalised FlutterwaveBillRequest is used as the common in-flight DTO
+// so the engine layer stays provider-agnostic.
+func (m *MonnifyFallbackClient) PurchaseBill(ctx context.Context, req FlutterwaveBillRequest) (*FlutterwaveBillResponse, error) {
+	if m.apiKey == "" {
+		return nil, fmt.Errorf("monnify fallback: api key not configured")
+	}
+
+	// Map category to Monnify service type.
+	serviceType := monnifyServiceType(req.Category)
+	if serviceType == "" {
+		return nil, fmt.Errorf("monnify fallback: unsupported category %q", req.Category)
+	}
+
+	payload := map[string]interface{}{
+		"amount":        float64(req.Amount) / 100, // Monnify expects NGN not kobo
+		"serviceType":   serviceType,
+		"uniqueReference": req.Reference,
+		"device":        req.CustomerID,
+	}
+
+	body, _ := json.Marshal(payload)
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		m.baseURL+"/api/v1/bills-payment/bills/pay", bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Authorization", "Basic "+monnifyBasicAuth(m.apiKey, m.secretKey))
+
+	resp, err := m.client.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("monnify PurchaseBill: %w", err)
+	}
+	defer resp.Body.Close()
+
+	var result struct {
+		RequestSuccessful bool   `json:"requestSuccessful"`
+		ResponseMessage   string `json:"responseMessage"`
+		ResponseBody      struct {
+			UniqueReference string `json:"uniqueReference"`
+			RechargeToken   string `json:"rechargeToken"`
+		} `json:"responseBody"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("monnify PurchaseBill decode: %w", err)
+	}
+	if !result.RequestSuccessful {
+		return nil, fmt.Errorf("monnify PurchaseBill failed: %s", result.ResponseMessage)
+	}
+
+	// Return in the normalised Flutterwave shape so the engine is provider-agnostic.
+	return &FlutterwaveBillResponse{
+		Status:  "success",
+		Message: result.ResponseMessage,
+		Data: FlutterwaveBillData{
+			Reference:     result.ResponseBody.UniqueReference,
+			RechargeToken: result.ResponseBody.RechargeToken,
+		},
+	}, nil
+}
+
+// CheckBillStatus polls Monnify for the status of a pending bill payment.
+func (m *MonnifyFallbackClient) CheckBillStatus(ctx context.Context, reference string) (*FlutterwaveBillStatusResponse, error) {
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet,
+		m.baseURL+"/api/v1/bills-payment/bills/"+reference, nil)
+	if err != nil {
+		return nil, err
+	}
+	httpReq.Header.Set("Authorization", "Basic "+monnifyBasicAuth(m.apiKey, m.secretKey))
+
+	resp, err := m.client.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("monnify CheckBillStatus: %w", err)
+	}
+	defer resp.Body.Close()
+
+	var result struct {
+		RequestSuccessful bool   `json:"requestSuccessful"`
+		ResponseBody      struct {
+			Status            string `json:"status"`
+			CustomerReference string `json:"customerReference"`
+			ProductName       string `json:"productName"`
+		} `json:"responseBody"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("monnify CheckBillStatus decode: %w", err)
+	}
+
+	monnifyStatus := "pending"
+	if result.RequestSuccessful && result.ResponseBody.Status == "PAID" {
+		monnifyStatus = "success"
+	}
+
+	return &FlutterwaveBillStatusResponse{
+		Status: monnifyStatus,
+		Data: FlutterwaveBillStatusData{
+			CustomerReference: result.ResponseBody.CustomerReference,
+			Product:           result.ResponseBody.ProductName,
+		},
+	}, nil
+}
+
+func monnifyServiceType(category models.ServiceCategory) string {
+	switch category {
+	case models.CategoryAirtime:
+		return "AIRTIME"
+	case models.CategoryData:
+		return "DATA"
+	case models.CategoryElectricity:
+		return "ELECTRICITY"
+	default:
+		return ""
+	}
+}
+
+func monnifyBasicAuth(apiKey, secretKey string) string {
+	raw := apiKey + ":" + secretKey
+	return base64.StdEncoding.EncodeToString([]byte(raw))
 }

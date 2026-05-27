@@ -38,16 +38,22 @@ type FundWalletRequest struct {
 	Provider   string `json:"provider"       binding:"required"`
 }
 
+// loyaltyAwarder is the minimal interface wallet service needs from loyalty.
+type loyaltyAwarder interface {
+	AwardPoints(ctx context.Context, userID string, sourceTxID uuid.UUID, category models.ServiceCategory, amountKobo int64)
+}
+
 // ── Service ───────────────────────────────────────────────────────────────────
 
 type Service struct {
-	walletRepo *postgres.WalletRepository
-	userRepo   *postgres.UserRepository
-	log        *zap.Logger
+	walletRepo  *postgres.WalletRepository
+	userRepo    *postgres.UserRepository
+	loyaltySvc  loyaltyAwarder
+	log         *zap.Logger
 }
 
-func NewService(walletRepo *postgres.WalletRepository, userRepo *postgres.UserRepository, log *zap.Logger) *Service {
-	return &Service{walletRepo: walletRepo, userRepo: userRepo, log: log}
+func NewService(walletRepo *postgres.WalletRepository, userRepo *postgres.UserRepository, loyaltySvc loyaltyAwarder, log *zap.Logger) *Service {
+	return &Service{walletRepo: walletRepo, userRepo: userRepo, loyaltySvc: loyaltySvc, log: log}
 }
 
 // GetBalance returns the wallet balance and KYC tier limits for a user.
@@ -132,10 +138,10 @@ func (s *Service) FundWallet(ctx context.Context, userID string, req FundWalletR
 		UpdatedAt:     time.Now(),
 	}
 
-	if err := s.walletRepo.CreditBalance(ctx, wallet.ID, req.Amount); err != nil {
-		return nil, err
-	}
-	if err := s.walletRepo.InsertTransaction(ctx, tx); err != nil {
+	// Atomic: credit balance + insert ledger entry in one DB transaction.
+	// Previously these were two separate calls — a crash between them would
+	// credit money with no audit record.
+	if err := s.walletRepo.CreditWithTransaction(ctx, wallet.ID, tx); err != nil {
 		return nil, err
 	}
 
@@ -143,6 +149,13 @@ func (s *Service) FundWallet(ctx context.Context, userID string, req FundWalletR
 		zap.String("user_id", userID),
 		zap.String("amount_ngn", strconv.FormatFloat(koboToNGN(req.Amount), 'f', 2, 64)),
 	)
+
+	// Wallet funding earns 0 points by design (see models.EarningRate),
+	// but we still call through so the loyalty service can apply bonus campaigns.
+	if s.loyaltySvc != nil {
+		go s.loyaltySvc.AwardPoints(context.Background(), userID, tx.ID, models.CategoryWalletFund, req.Amount)
+	}
+
 	return tx, nil
 }
 

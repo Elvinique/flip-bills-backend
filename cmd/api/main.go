@@ -91,6 +91,14 @@ func main() {
 	reconEngine := reconcile.NewEngine(walletRepo, log, cfg.Recon.TimeoutSeconds)
 	flutterwaveBills := utilitysvc.NewFlutterwaveClient(cfg.Pay.FlutterwaveKey, cfg.Pay.FlutterwaveBaseURL)
 
+	// Monnify is the fallback aggregator — used when Flutterwave times out (PRD 3A).
+	// If keys are blank the fallback is disabled and the engine reverses on primary failure.
+	var monnifyFallback utilitysvc.BillProvider
+	if cfg.Pay.MonnifyAPIKey != "" && cfg.Pay.MonnifySecret != "" {
+		monnifyFallback = utilitysvc.NewMonnifyFallbackClient(
+			cfg.Pay.MonnifyAPIKey, cfg.Pay.MonnifySecret, cfg.Pay.MonnifyBaseURL, log)
+	}
+
 	// ── Travel operator adapters ──────────────────────────────────────────────
 	busOperators := buildBusOperators(cfg, log)
 	flightOperators := []operators.FlightOperator{
@@ -105,12 +113,12 @@ func main() {
 	// ── Domain services ───────────────────────────────────────────────────────
 	loyaltyService := loyaltysvc.NewService(loyaltyRepo, walletRepo, log)
 	authService := authsvc.NewService(userRepo, walletRepo, otpRepo, smsSvc, jwtManager, log)
-	walletService := walletsvc.NewService(walletRepo, userRepo, log)
-	utilityService := utilitysvc.NewService(walletRepo, userRepo, reconEngine, loyaltyService, smsSvc, flutterwaveBills, log)
+	walletService := walletsvc.NewService(walletRepo, userRepo, loyaltyService, log)
+	utilityService := utilitysvc.NewService(walletRepo, userRepo, reconEngine, loyaltyService, smsSvc, flutterwaveBills, monnifyFallback, log)
 	travelService := travelsvc.NewService(
 		busOperators, flightOperators,
 		travelRepo, walletRepo, travelCacheRepo,
-		smsSvc, cfg.Travel.OfflineQRSecret, log,
+		smsSvc, loyaltyService, cfg.Travel.OfflineQRSecret, log,
 	)
 	operatorKeys := map[string]string{
 		"GIGM": cfg.Travel.GIGMDispatcherKey,
