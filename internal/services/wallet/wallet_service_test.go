@@ -150,7 +150,9 @@ func TestFundWallet_Success(t *testing.T) {
 	}
 	// Loyalty goroutine — give it a moment.
 	time.Sleep(50 * time.Millisecond)
-	loy.mu.Lock(); calls := loy.calls; loy.mu.Unlock()
+	loy.mu.Lock()
+	calls := loy.calls
+	loy.mu.Unlock()
 	if calls != 1 {
 		t.Errorf("loyalty AwardPoints calls = %d, want 1", calls)
 	}
