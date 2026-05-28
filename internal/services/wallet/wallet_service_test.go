@@ -2,6 +2,7 @@ package wallet
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
@@ -68,9 +69,14 @@ func (f *fakeUserStore) FindByID(_ context.Context, _ string) (*models.User, err
 
 // ─────────────────────────────────────────────────────────────────────────────
 
-type fakeLoyalty struct{ calls int }
+type fakeLoyalty struct {
+	mu    sync.Mutex
+	calls int
+}
 
 func (f *fakeLoyalty) AwardPoints(_ context.Context, _ string, _ uuid.UUID, _ models.ServiceCategory, _ int64) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.calls++
 }
 
@@ -143,9 +149,10 @@ func TestFundWallet_Success(t *testing.T) {
 		t.Errorf("wallet balance = %d, want 600000", ws.wallet.Balance)
 	}
 	// Loyalty goroutine — give it a moment.
-	time.Sleep(20 * time.Millisecond)
-	if loy.calls != 1 {
-		t.Errorf("loyalty AwardPoints calls = %d, want 1", loy.calls)
+	time.Sleep(50 * time.Millisecond)
+	loy.mu.Lock(); calls := loy.calls; loy.mu.Unlock()
+	if calls != 1 {
+		t.Errorf("loyalty AwardPoints calls = %d, want 1", calls)
 	}
 }
 
