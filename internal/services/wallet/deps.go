@@ -2,7 +2,6 @@ package wallet
 
 import (
 	"context"
-	"time"
 
 	"github.com/flip-bills/backend/internal/models"
 	"github.com/flip-bills/backend/internal/repository/postgres"
@@ -26,8 +25,3 @@ var _ userStore   = (*postgres.UserRepository)(nil)
 // CategorySpendStats is re-exported here so tests don't need to import postgres.
 type CategorySpendStats = postgres.CategorySpendStats
 
-// walletStoreWithStats extends walletStore for the betting velocity check.
-type walletStoreWithStats interface {
-	walletStore
-	CategorySpendStats(ctx context.Context, userID string, category models.ServiceCategory, since time.Time) (*CategorySpendStats, error)
-}

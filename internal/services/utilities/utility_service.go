@@ -77,14 +77,14 @@ func (e *RiskChallengeError) Error() string {
 // ── Service ───────────────────────────────────────────────────────────────────
 
 type Service struct {
-	walletRepo   *postgres.WalletRepository
-	userRepo     *postgres.UserRepository
-	recon        *reconciliation.Engine
-	loyaltySvc   *loyalty.Service
-	sms          *notifications.SMSService
-	bills        BillProvider
+	walletRepo    *postgres.WalletRepository
+	userRepo      *postgres.UserRepository
+	recon         *reconciliation.Engine
+	loyaltySvc    *loyalty.Service
+	sms           *notifications.SMSService
+	bills         BillProvider
 	fallbackBills BillProvider // Monnify — used when primary (Flutterwave) fails
-	log          *zap.Logger
+	log           *zap.Logger
 }
 
 func NewService(

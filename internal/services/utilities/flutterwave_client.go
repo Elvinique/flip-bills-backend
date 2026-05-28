@@ -1,12 +1,12 @@
 package utilities
 
 import (
-	"go.uber.org/zap"
 	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"go.uber.org/zap"
 	"io"
 	"net/http"
 	"net/url"
@@ -519,10 +519,10 @@ func (m *MonnifyFallbackClient) PurchaseBill(ctx context.Context, req Flutterwav
 	}
 
 	payload := map[string]interface{}{
-		"amount":        float64(req.Amount) / 100, // Monnify expects NGN not kobo
-		"serviceType":   serviceType,
+		"amount":          float64(req.Amount) / 100, // Monnify expects NGN not kobo
+		"serviceType":     serviceType,
 		"uniqueReference": req.Reference,
-		"device":        req.CustomerID,
+		"device":          req.CustomerID,
 	}
 
 	body, _ := json.Marshal(payload)
@@ -582,7 +582,7 @@ func (m *MonnifyFallbackClient) CheckBillStatus(ctx context.Context, reference s
 	defer resp.Body.Close()
 
 	var result struct {
-		RequestSuccessful bool   `json:"requestSuccessful"`
+		RequestSuccessful bool `json:"requestSuccessful"`
 		ResponseBody      struct {
 			Status            string `json:"status"`
 			CustomerReference string `json:"customerReference"`

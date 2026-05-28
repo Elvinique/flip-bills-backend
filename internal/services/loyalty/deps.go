@@ -22,4 +22,4 @@ type walletRepo interface {
 }
 
 var _ loyaltyRepo = (*postgres.LoyaltyRepository)(nil)
-var _ walletRepo  = (*postgres.WalletRepository)(nil)
+var _ walletRepo = (*postgres.WalletRepository)(nil)

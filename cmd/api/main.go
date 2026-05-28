@@ -61,7 +61,7 @@ func main() {
 	if err != nil {
 		log.Fatal("MongoDB connection failed", zap.Error(err))
 	}
-	defer mongoClient.Disconnect(context.Background())
+	defer func() { _ = mongoClient.Disconnect(context.Background()) }()
 	mongoDB := mongoClient.Database(cfg.Mongo.DB)
 	log.Info("MongoDB connected")
 

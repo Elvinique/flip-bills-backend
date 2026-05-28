@@ -14,7 +14,7 @@ func TestWalletBalanceConstraints(t *testing.T) {
 		Balance:       1_000_000, // ₦10,000
 		LedgerBalance: 0,
 		Currency:      NGN,
-		DailySpend:    200_000, // ₦2,000
+		DailySpend:    200_000,   // ₦2,000
 		DailyLimit:    5_000_000, // ₦50,000
 		CreatedAt:     time.Now(),
 		UpdatedAt:     time.Now(),

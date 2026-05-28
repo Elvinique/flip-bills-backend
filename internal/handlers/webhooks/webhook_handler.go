@@ -10,11 +10,9 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"fmt"
 	"io"
 	"net/http"
 
-	"github.com/flip-bills/backend/internal/middleware"
 	walletsvc "github.com/flip-bills/backend/internal/services/wallet"
 	"github.com/flip-bills/backend/pkg/response"
 	"github.com/gin-gonic/gin"
@@ -216,12 +214,4 @@ func verifyMonnifySignature(body []byte, secret, signature string) bool {
 	return hmac.Equal([]byte(expected), []byte(signature))
 }
 
-// GetUserID re-exports middleware helper for any webhook that needs it.
-func getUserID(c *gin.Context) string {
-	return middleware.GetUserID(c)
-}
 
-// fmtKobo is a debug helper.
-func fmtKobo(kobo int64) string {
-	return fmt.Sprintf("₦%.2f", float64(kobo)/100)
-}
