@@ -213,5 +213,3 @@ func verifyMonnifySignature(body []byte, secret, signature string) bool {
 	expected := hex.EncodeToString(mac.Sum(nil))
 	return hmac.Equal([]byte(expected), []byte(signature))
 }
-
-

@@ -14,7 +14,7 @@ import (
 
 // Compile-time proof that concrete types satisfy the interfaces.
 var _ walletStore = (*postgres.WalletRepository)(nil)
-var _ userStore   = (*postgres.UserRepository)(nil)
+var _ userStore = (*postgres.UserRepository)(nil)
 
 // ── DTOs ─────────────────────────────────────────────────────────────────────
 
@@ -50,10 +50,10 @@ type loyaltyAwarder interface {
 // ── Service ───────────────────────────────────────────────────────────────────
 
 type Service struct {
-	walletRepo  walletStore
-	userRepo    userStore
-	loyaltySvc  loyaltyAwarder
-	log         *zap.Logger
+	walletRepo walletStore
+	userRepo   userStore
+	loyaltySvc loyaltyAwarder
+	log        *zap.Logger
 }
 
 func NewService(walletRepo *postgres.WalletRepository, userRepo *postgres.UserRepository, loyaltySvc loyaltyAwarder, log *zap.Logger) *Service {

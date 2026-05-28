@@ -20,8 +20,7 @@ type userStore interface {
 
 // Compile-time interface satisfaction checks.
 var _ walletStore = (*postgres.WalletRepository)(nil)
-var _ userStore   = (*postgres.UserRepository)(nil)
+var _ userStore = (*postgres.UserRepository)(nil)
 
 // CategorySpendStats is re-exported here so tests don't need to import postgres.
 type CategorySpendStats = postgres.CategorySpendStats
-

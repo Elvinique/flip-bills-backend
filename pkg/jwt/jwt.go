@@ -10,7 +10,7 @@ import (
 
 // Claims is the custom JWT payload.
 type Claims struct {
-	UserID string `json:"user_id"`
+	UserID  string `json:"user_id"`
 	KYCTier int    `json:"kyc_tier"` // 0=unverified, 1=BVN, 2=full NIN
 	jwt.RegisteredClaims
 }
