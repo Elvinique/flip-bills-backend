@@ -122,8 +122,8 @@ func (s *Service) PurchaseData(ctx context.Context, userID string, req DataReque
 			"phone":       req.Phone,
 			"network":     req.Network,
 			"plan_code":   req.PlanCode,
-			"item_code":   req.PlanCode,   // Flutterwave item_code e.g. MD492
-			"biller_code": req.BillerCode, // Flutterwave biller_code e.g. BIL108
+			"item_code":   req.PlanCode,
+			"biller_code": req.BillerCode,
 		},
 		req.ClientReference,
 	)
@@ -228,47 +228,47 @@ func (s *Service) executeVAS(
 	extRef, reconErr := s.recon.ExecuteWithFallback(
 		ctx, tx,
 		func(c context.Context) (string, error) {
-			s.log.Info("calling Flutterwave bills api", zap.String("ref", ref))
-			resp, err := s.bills.PurchaseBill(c, FlutterwaveBillRequest{
+			s.log.Info("calling primary bill provider api", zap.String("ref", ref))
+			resp, err := s.bills.PurchaseBill(c, BillPurchaseParams{
 				Category:   category,
 				Reference:  ref,
-				CustomerID: flutterwaveCustomerID(category, meta),
+				CustomerID: customerIDFromMeta(category, meta),
 				Amount:     amount,
 				Meta:       meta,
 			})
 			if err != nil {
 				return "", err
 			}
-			extRef := flutterwaveExternalRef(resp)
-			status, err := s.confirmFlutterwaveDelivery(c, ref, extRef)
+
+			status, err := s.confirmProviderDelivery(c, s.bills, ref, resp.ExternalReference)
 			if err != nil {
 				return "", err
 			}
-			billReceiptMeta = buildBillReceiptMeta(meta, resp, status)
-			billToken = extractBillToken(resp, status)
-			return extRef, nil
+
+			billReceiptMeta = buildReceiptEnvelope(meta, resp.RawMessage, status.RawMessage)
+			billToken = status.RechargeToken
+			return resp.ExternalReference, nil
 		},
 		s.buildFallbackCall(ctx, ref, category, amount, meta, &billReceiptMeta, &billToken),
 	)
+
 	if reconErr != nil {
 		s.sendVASRefundAlert(userID, tx)
 		return nil, reconErr
 	}
+
 	tx.ExternalRef = extRef
 	tx.Status = models.TxSuccess
 	tx.UpdatedAt = time.Now()
+
 	if len(billReceiptMeta) > 0 {
 		if err := s.walletRepo.UpdateTransactionMeta(ctx, tx.Reference, billReceiptMeta); err != nil {
-			s.log.Warn("could not persist Flutterwave receipt metadata",
-				zap.String("ref", tx.Reference),
-				zap.Error(err),
-			)
+			s.log.Warn("could not persist receipt metadata", zap.String("ref", tx.Reference), zap.Error(err))
 		} else {
 			tx.Meta = billReceiptMeta
 		}
 	}
 
-	// Award loyalty points — non-blocking, never fails the parent transaction.
 	go s.loyaltySvc.AwardPoints(context.Background(), userID, tx.ID, category, amount)
 	s.sendVASSuccessAlert(userID, tx, billToken)
 
@@ -379,13 +379,13 @@ func normalizeReference(ref string) string {
 	return b.String()
 }
 
-func (s *Service) confirmFlutterwaveDelivery(ctx context.Context, reference string, externalRef string) (*FlutterwaveBillStatusResponse, error) {
-	if status, err := s.checkFlutterwaveStatus(ctx, reference); err == nil {
+func (s *Service) confirmProviderDelivery(ctx context.Context, provider BillProvider, reference string, externalRef string) (*UnifiedBillResponse, error) {
+	if status, err := provider.CheckBillStatus(ctx, reference); err == nil && status.Status == "success" {
 		return status, nil
 	}
 
 	if externalRef != "" && externalRef != reference {
-		if status, err := s.checkFlutterwaveStatus(ctx, externalRef); err == nil {
+		if status, err := provider.CheckBillStatus(ctx, externalRef); err == nil && status.Status == "success" {
 			return status, nil
 		}
 	}
@@ -396,13 +396,13 @@ func (s *Service) confirmFlutterwaveDelivery(ctx context.Context, reference stri
 	for {
 		select {
 		case <-ctx.Done():
-			return nil, fmt.Errorf("flutterwave bill delivery not confirmed: %w", ctx.Err())
+			return nil, fmt.Errorf("bill delivery not confirmed through provider: %w", ctx.Err())
 		case <-ticker.C:
-			if status, err := s.checkFlutterwaveStatus(ctx, reference); err == nil {
+			if status, err := provider.CheckBillStatus(ctx, reference); err == nil && status.Status == "success" {
 				return status, nil
 			}
 			if externalRef != "" && externalRef != reference {
-				if status, err := s.checkFlutterwaveStatus(ctx, externalRef); err == nil {
+				if status, err := provider.CheckBillStatus(ctx, externalRef); err == nil && status.Status == "success" {
 					return status, nil
 				}
 			}
@@ -410,83 +410,24 @@ func (s *Service) confirmFlutterwaveDelivery(ctx context.Context, reference stri
 	}
 }
 
-func (s *Service) checkFlutterwaveStatus(ctx context.Context, reference string) (*FlutterwaveBillStatusResponse, error) {
-	status, err := s.bills.CheckBillStatus(ctx, reference)
-	if err != nil {
-		return nil, err
-	}
-	if status.Status != "success" {
-		return nil, fmt.Errorf("flutterwave bill status is %q", status.Status)
-	}
-	return status, nil
-}
-
-func buildBillReceiptMeta(
-	base map[string]interface{},
-	payment *FlutterwaveBillResponse,
-	status *FlutterwaveBillStatusResponse,
-) []byte {
+func buildReceiptEnvelope(base map[string]interface{}, purchaseRaw []byte, statusRaw []byte) []byte {
 	receipt := make(map[string]interface{}, len(base)+1)
 	for key, value := range base {
 		receipt[key] = value
 	}
-	receipt["flutterwave_bill"] = map[string]interface{}{
-		"payment_response": payment,
-		"status_response":  status,
+
+	var purchaseJSON, statusJSON interface{}
+	_ = json.Unmarshal(purchaseRaw, &purchaseJSON)
+	_ = json.Unmarshal(statusRaw, &statusJSON)
+
+	receipt["provider_receipt"] = map[string]interface{}{
+		"purchase_payload": purchaseJSON,
+		"status_payload":   statusJSON,
 		"confirmed_at":     time.Now().UTC().Format(time.RFC3339),
 	}
 
-	body, err := json.Marshal(receipt)
-	if err != nil {
-		return nil
-	}
+	body, _ := json.Marshal(receipt)
 	return body
-}
-
-func extractBillToken(payment *FlutterwaveBillResponse, status *FlutterwaveBillStatusResponse) string {
-	if payment != nil && strings.TrimSpace(payment.Data.RechargeToken) != "" {
-		return strings.TrimSpace(payment.Data.RechargeToken)
-	}
-	if status != nil {
-		if token := tokenFromRawJSON(status.Data.Extra); token != "" {
-			return token
-		}
-	}
-	return ""
-}
-
-func tokenFromRawJSON(raw json.RawMessage) string {
-	if len(raw) == 0 {
-		return ""
-	}
-	var value interface{}
-	if err := json.Unmarshal(raw, &value); err != nil {
-		return ""
-	}
-	return findToken(value)
-}
-
-func findToken(value interface{}) string {
-	switch v := value.(type) {
-	case map[string]interface{}:
-		for _, key := range []string{"token", "recharge_token", "vend_token", "meter_token"} {
-			if token, ok := v[key].(string); ok && strings.TrimSpace(token) != "" {
-				return strings.TrimSpace(token)
-			}
-		}
-		for _, nested := range v {
-			if token := findToken(nested); token != "" {
-				return token
-			}
-		}
-	case []interface{}:
-		for _, nested := range v {
-			if token := findToken(nested); token != "" {
-				return token
-			}
-		}
-	}
-	return ""
 }
 
 func (s *Service) sendVASSuccessAlert(userID string, tx *models.Transaction, token string) {
@@ -508,9 +449,6 @@ func (s *Service) sendVASSuccessAlert(userID string, tx *models.Transaction, tok
 	}()
 }
 
-// buildFallbackCall returns a BillerCallFn for the Monnify fallback provider,
-// or nil if Monnify is not configured. Returning nil tells the engine to
-// reverse and stop rather than attempt a second provider.
 func (s *Service) buildFallbackCall(
 	_ context.Context,
 	ref string,
@@ -524,26 +462,28 @@ func (s *Service) buildFallbackCall(
 		return nil
 	}
 	return func(c context.Context) (string, error) {
-		s.log.Info("calling Monnify fallback bills api", zap.String("ref", ref))
+		s.log.Info("switching execution to Monnify fallback provider", zap.String("ref", ref))
 		fallbackRef := ref + "_FB"
-		resp, err := s.fallbackBills.PurchaseBill(c, FlutterwaveBillRequest{
+		resp, err := s.fallbackBills.PurchaseBill(c, BillPurchaseParams{
 			Category:   category,
 			Reference:  fallbackRef,
-			CustomerID: flutterwaveCustomerID(category, meta),
+			CustomerID: customerIDFromMeta(category, meta),
 			Amount:     amount,
 			Meta:       meta,
 		})
 		if err != nil {
 			return "", err
 		}
-		extRef := flutterwaveExternalRef(resp)
+
 		status, err := s.fallbackBills.CheckBillStatus(c, fallbackRef)
 		if err != nil {
-			return extRef, nil // fallback succeeded even if status check fails
+			// Succeeded even if the status verification times out
+			return resp.ExternalReference, nil
 		}
-		*receiptMeta = buildBillReceiptMeta(meta, resp, status)
-		*billToken = extractBillToken(resp, status)
-		return extRef, nil
+
+		*receiptMeta = buildReceiptEnvelope(meta, resp.RawMessage, status.RawMessage)
+		*billToken = status.RechargeToken
+		return resp.ExternalReference, nil
 	}
 }
 
@@ -566,7 +506,7 @@ func (s *Service) sendVASRefundAlert(userID string, tx *models.Transaction) {
 	}()
 }
 
-func flutterwaveCustomerID(category models.ServiceCategory, meta map[string]interface{}) string {
+func customerIDFromMeta(category models.ServiceCategory, meta map[string]interface{}) string {
 	switch category {
 	case models.CategoryAirtime, models.CategoryData:
 		return stringFromMeta(meta, "phone")
@@ -577,22 +517,6 @@ func flutterwaveCustomerID(category models.ServiceCategory, meta map[string]inte
 	default:
 		return ""
 	}
-}
-
-func flutterwaveExternalRef(resp *FlutterwaveBillResponse) string {
-	if resp == nil {
-		return ""
-	}
-	if resp.Data.Reference != "" {
-		return resp.Data.Reference
-	}
-	if resp.Data.TxRef != "" {
-		return resp.Data.TxRef
-	}
-	if resp.Data.BatchReference != "" {
-		return resp.Data.BatchReference
-	}
-	return ""
 }
 
 func stringFromMeta(meta map[string]interface{}, key string) string {

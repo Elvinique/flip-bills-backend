@@ -25,16 +25,16 @@ func TestFlutterwaveClientPurchaseBill(t *testing.T) {
 		}
 
 		return jsonResponse(http.StatusOK, `{
-			"status": "success",
-			"message": "Bill payment successful",
-			"data": {
-				"reference": "BP123",
-				"tx_ref": "CF-FLYAPI-123"
-			}
+            "status": "success",
+            "message": "Bill payment successful",
+            "data": {
+                "reference": "BP123",
+                "tx_ref": "CF-FLYAPI-123"
+            }
 		}`), nil
 	})}
 
-	resp, err := client.PurchaseBill(context.Background(), FlutterwaveBillRequest{
+	resp, err := client.PurchaseBill(context.Background(), BillPurchaseParams{
 		Category:   models.CategoryAirtime,
 		Reference:  "FB-123",
 		CustomerID: "08031234567",
@@ -62,8 +62,8 @@ func TestFlutterwaveClientPurchaseBill(t *testing.T) {
 	if gotPayload["customer_id"] != "08031234567" || gotPayload["reference"] != "FB-123" {
 		t.Fatalf("unexpected customer/reference payload: %#v", gotPayload)
 	}
-	if resp.Data.Reference != "BP123" {
-		t.Fatalf("response reference = %q, want BP123", resp.Data.Reference)
+	if resp.ExternalReference != "BP123" {
+		t.Fatalf("response reference = %q, want BP123", resp.ExternalReference)
 	}
 }
 
@@ -73,13 +73,13 @@ func TestFlutterwaveClientCheckBillStatus(t *testing.T) {
 	client.httpClient = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		gotPath = r.URL.Path
 		return jsonResponse(http.StatusOK, `{
-			"status": "success",
-			"message": "Bill status fetch successful",
-			"data": {
-				"flw_ref": "BP123",
-				"tx_ref": "CF-FLYAPI-123",
-				"product": "AIRTIME"
-			}
+            "status": "success",
+            "message": "Bill status fetch successful",
+            "data": {
+                "flw_ref": "BP123",
+                "tx_ref": "CF-FLYAPI-123",
+                "product": "AIRTIME"
+            }
 		}`), nil
 	})}
 
@@ -90,8 +90,11 @@ func TestFlutterwaveClientCheckBillStatus(t *testing.T) {
 	if gotPath != "/v3/bills/BP123" {
 		t.Fatalf("path = %q, want /v3/bills/BP123", gotPath)
 	}
-	if resp.Data.FlwRef != "BP123" {
-		t.Fatalf("flw_ref = %q, want BP123", resp.Data.FlwRef)
+	if resp.ExternalReference != "BP123" {
+		t.Fatalf("flw_ref = %q, want BP123", resp.ExternalReference)
+	}
+	if resp.Status != "success" {
+		t.Fatalf("status = %q, want success", resp.Status)
 	}
 }
 

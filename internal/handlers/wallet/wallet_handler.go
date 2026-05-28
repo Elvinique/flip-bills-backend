@@ -14,6 +14,22 @@ type Handler struct {
 	svc *walletsvc.Service
 	log *zap.Logger
 }
+// POST /wallet/initialize-funding
+func (h *Handler) InitializeFunding(c *gin.Context) {
+	var req walletsvc.InitializeFundingRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "validation failed", err.Error())
+		return
+	}
+
+	res, err := h.svc.InitializeFunding(c.Request.Context(), middleware.GetUserID(c), req)
+	if err != nil {
+		response.InternalError(c, err.Error(), nil)
+		return
+	}
+
+	response.OK(c, "payment funding initialized successfully", res)
+}
 
 func NewHandler(svc *walletsvc.Service, log *zap.Logger) *Handler {
 	return &Handler{svc: svc, log: log}

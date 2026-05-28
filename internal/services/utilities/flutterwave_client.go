@@ -3,10 +3,8 @@ package utilities
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"go.uber.org/zap"
 	"io"
 	"net/http"
 	"net/url"
@@ -21,12 +19,6 @@ const (
 	defaultFlutterwaveCountry    = "NG"
 	defaultFlutterwaveRecurrence = "ONCE"
 )
-
-// BillProvider is the VAS provider contract used by the utility service.
-type BillProvider interface {
-	PurchaseBill(ctx context.Context, req FlutterwaveBillRequest) (*FlutterwaveBillResponse, error)
-	CheckBillStatus(ctx context.Context, reference string) (*FlutterwaveBillStatusResponse, error)
-}
 
 type FlutterwaveClient struct {
 	baseURL    string
@@ -71,14 +63,6 @@ type FlutterwavePaymentResponse struct {
 	Data    struct {
 		Link string `json:"link"`
 	} `json:"data"`
-}
-
-type FlutterwaveBillRequest struct {
-	Category   models.ServiceCategory
-	Reference  string
-	CustomerID string
-	Amount     int64
-	Meta       map[string]interface{}
 }
 
 type FlutterwaveBillResponse struct {
@@ -136,6 +120,8 @@ type FlutterwaveBillStatusData struct {
 	ProductDetails    string          `json:"product_details"`
 }
 
+// ── Models Required By catalog.go ─────────────────────────────────────────────
+
 type FlutterwaveBillCategory struct {
 	ID       int    `json:"id"`
 	Name     string `json:"name"`
@@ -171,6 +157,8 @@ type flutterwaveErrorResponse struct {
 	Message string `json:"message"`
 }
 
+// ── Client Methods ───────────────────────────────────────────────────────────
+
 func NewFlutterwaveClient(secretKey, baseURL string) *FlutterwaveClient {
 	return &FlutterwaveClient{
 		baseURL:   strings.TrimRight(baseURL, "/"),
@@ -181,26 +169,23 @@ func NewFlutterwaveClient(secretKey, baseURL string) *FlutterwaveClient {
 	}
 }
 
-func (c *FlutterwaveClient) PurchaseBill(ctx context.Context, req FlutterwaveBillRequest) (*FlutterwaveBillResponse, error) {
+// PurchaseBill executes a VAS payout via Flutterwave and returns a normalized response wrapper.
+func (c *FlutterwaveClient) PurchaseBill(ctx context.Context, params BillPurchaseParams) (*UnifiedBillResponse, error) {
 	if err := c.validate(); err != nil {
 		return nil, err
 	}
 
 	payload := map[string]interface{}{
 		"country":     defaultFlutterwaveCountry,
-		"customer":    req.CustomerID,
-		"customer_id": req.CustomerID,
-		"amount":      koboToNaira(req.Amount),
+		"customer":    params.CustomerID,
+		"customer_id": params.CustomerID,
+		"amount":      float64(params.Amount) / 100,
 		"recurrence":  defaultFlutterwaveRecurrence,
-		"type":        flutterwaveBillType(req.Category, req.Meta),
-		"reference":   req.Reference,
+		"type":        flutterwaveBillType(params.Category, params.Meta),
+		"reference":   params.Reference,
 	}
 
-	// For data bundles, Flutterwave requires biller_code and item_code
-	// explicitly in the payload — spread meta fields in first, then
-	// override with canonical keys to ensure correct field names.
-	for key, value := range req.Meta {
-		// Skip internal fields that are not Flutterwave payload fields.
+	for key, value := range params.Meta {
 		switch key {
 		case "plan_code", "network", "meter_type", "platform":
 			continue
@@ -208,42 +193,37 @@ func (c *FlutterwaveClient) PurchaseBill(ctx context.Context, req FlutterwaveBil
 		payload[key] = value
 	}
 
-	// Canonical overrides for data bundle fields.
-	if req.Category == models.CategoryData {
-		if itemCode := stringFromMeta(req.Meta, "item_code"); itemCode != "" {
+	if params.Category == models.CategoryData {
+		if itemCode := stringFromMeta(params.Meta, "item_code"); itemCode != "" {
 			payload["item_code"] = itemCode
-		} else if planCode := stringFromMeta(req.Meta, "plan_code"); planCode != "" {
-			// Fallback: treat plan_code as item_code for backward compatibility.
+		} else if planCode := stringFromMeta(params.Meta, "plan_code"); planCode != "" {
 			payload["item_code"] = planCode
 		}
-		if billerCode := stringFromMeta(req.Meta, "biller_code"); billerCode != "" {
+		if billerCode := stringFromMeta(params.Meta, "biller_code"); billerCode != "" {
 			payload["biller_code"] = billerCode
 		}
-		// Flutterwave data bundles use the phone as customer field.
-		if phone := stringFromMeta(req.Meta, "phone"); phone != "" {
+		if phone := stringFromMeta(params.Meta, "phone"); phone != "" {
 			payload["customer"] = phone
 			payload["customer_id"] = phone
 		}
 	}
 
-	// Electricity: meter number is the customer identifier.
-	if req.Category == models.CategoryElectricity {
-		if meterNumber := stringFromMeta(req.Meta, "meter_number"); meterNumber != "" {
+	if params.Category == models.CategoryElectricity {
+		if meterNumber := stringFromMeta(params.Meta, "meter_number"); meterNumber != "" {
 			payload["customer"] = meterNumber
 			payload["customer_id"] = meterNumber
 		}
-		if billerCode := stringFromMeta(req.Meta, "biller_code"); billerCode != "" {
+		if billerCode := stringFromMeta(params.Meta, "biller_code"); billerCode != "" {
 			payload["biller_code"] = billerCode
 		}
 	}
 
-	// Betting: customer_id is the betting account ID.
-	if req.Category == models.CategoryBetting {
-		if customerID := stringFromMeta(req.Meta, "customer_id"); customerID != "" {
+	if params.Category == models.CategoryBetting {
+		if customerID := stringFromMeta(params.Meta, "customer_id"); customerID != "" {
 			payload["customer"] = customerID
 			payload["customer_id"] = customerID
 		}
-		if billerCode := stringFromMeta(req.Meta, "biller_code"); billerCode != "" {
+		if billerCode := stringFromMeta(params.Meta, "biller_code"); billerCode != "" {
 			payload["biller_code"] = billerCode
 		}
 	}
@@ -255,10 +235,27 @@ func (c *FlutterwaveClient) PurchaseBill(ctx context.Context, req FlutterwaveBil
 	if response.Status != "success" {
 		return nil, fmt.Errorf("flutterwave bill payment failed: %s", response.Message)
 	}
-	return &response, nil
+
+	extRef := response.Data.Reference
+	if extRef == "" {
+		extRef = response.Data.TxRef
+	}
+	if extRef == "" {
+		extRef = response.Data.BatchReference
+	}
+
+	rawBytes, _ := json.Marshal(response)
+
+	return &UnifiedBillResponse{
+		ExternalReference: extRef,
+		RechargeToken:     response.Data.RechargeToken,
+		Status:            "success",
+		RawMessage:        rawBytes,
+	}, nil
 }
 
-func (c *FlutterwaveClient) CheckBillStatus(ctx context.Context, reference string) (*FlutterwaveBillStatusResponse, error) {
+// CheckBillStatus polls Flutterwave to verify the operational state of a payout.
+func (c *FlutterwaveClient) CheckBillStatus(ctx context.Context, reference string) (*UnifiedBillResponse, error) {
 	if err := c.validate(); err != nil {
 		return nil, err
 	}
@@ -270,13 +267,21 @@ func (c *FlutterwaveClient) CheckBillStatus(ctx context.Context, reference strin
 	if err := c.do(ctx, http.MethodGet, "/bills/"+reference, nil, &response); err != nil {
 		return nil, err
 	}
-	if response.Status != "success" {
-		return nil, fmt.Errorf("flutterwave bill status check failed: %s", response.Message)
+
+	normalizedStatus := "pending"
+	if response.Status == "success" {
+		normalizedStatus = "success"
 	}
-	return &response, nil
+
+	rawBytes, _ := json.Marshal(response)
+
+	return &UnifiedBillResponse{
+		ExternalReference: response.Data.FlwRef,
+		Status:            normalizedStatus,
+		RawMessage:        rawBytes,
+	}, nil
 }
 
-// InitializePayment creates a standard checkout link for wallet funding.
 func (c *FlutterwaveClient) InitializePayment(ctx context.Context, req FlutterwavePaymentRequest) (*FlutterwavePaymentResponse, error) {
 	if err := c.validate(); err != nil {
 		return nil, err
@@ -428,10 +433,6 @@ func flutterwaveBillType(category models.ServiceCategory, meta map[string]interf
 	}
 }
 
-func koboToNaira(amount int64) float64 {
-	return float64(amount) / 100
-}
-
 func (c FlutterwaveBillCategory) Code() string {
 	for _, value := range []string{c.CodeRaw, c.Category, c.Label, c.Name} {
 		if strings.TrimSpace(value) != "" {
@@ -479,148 +480,4 @@ func (i FlutterwaveBillItem) AmountKobo() int64 {
 		}
 	}
 	return 0
-}
-
-// ── Monnify fallback provider ─────────────────────────────────────────────────
-// MonnifyFallbackClient satisfies BillProvider as a secondary aggregator.
-// The engine calls this automatically when Flutterwave times out or errors
-// (PRD Section 3A — "swapping instantly from Interswitch to Flutterwave or Monnify").
-// Full Monnify Bills API: https://developers.monnify.com/api/#bills
-type MonnifyFallbackClient struct {
-	apiKey    string
-	secretKey string
-	baseURL   string
-	client    *http.Client
-	log       *zap.Logger
-}
-
-func NewMonnifyFallbackClient(apiKey, secretKey, baseURL string, log *zap.Logger) *MonnifyFallbackClient {
-	return &MonnifyFallbackClient{
-		apiKey:    apiKey,
-		secretKey: secretKey,
-		baseURL:   baseURL,
-		client:    &http.Client{Timeout: 20 * time.Second},
-		log:       log,
-	}
-}
-
-// PurchaseBill maps a Flutterwave-shaped request to Monnify's bills endpoint.
-// The normalised FlutterwaveBillRequest is used as the common in-flight DTO
-// so the engine layer stays provider-agnostic.
-func (m *MonnifyFallbackClient) PurchaseBill(ctx context.Context, req FlutterwaveBillRequest) (*FlutterwaveBillResponse, error) {
-	if m.apiKey == "" {
-		return nil, fmt.Errorf("monnify fallback: api key not configured")
-	}
-
-	// Map category to Monnify service type.
-	serviceType := monnifyServiceType(req.Category)
-	if serviceType == "" {
-		return nil, fmt.Errorf("monnify fallback: unsupported category %q", req.Category)
-	}
-
-	payload := map[string]interface{}{
-		"amount":          float64(req.Amount) / 100, // Monnify expects NGN not kobo
-		"serviceType":     serviceType,
-		"uniqueReference": req.Reference,
-		"device":          req.CustomerID,
-	}
-
-	body, _ := json.Marshal(payload)
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		m.baseURL+"/api/v1/bills-payment/bills/pay", bytes.NewReader(body))
-	if err != nil {
-		return nil, err
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Authorization", "Basic "+monnifyBasicAuth(m.apiKey, m.secretKey))
-
-	resp, err := m.client.Do(httpReq)
-	if err != nil {
-		return nil, fmt.Errorf("monnify PurchaseBill: %w", err)
-	}
-	defer resp.Body.Close()
-
-	var result struct {
-		RequestSuccessful bool   `json:"requestSuccessful"`
-		ResponseMessage   string `json:"responseMessage"`
-		ResponseBody      struct {
-			UniqueReference string `json:"uniqueReference"`
-			RechargeToken   string `json:"rechargeToken"`
-		} `json:"responseBody"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("monnify PurchaseBill decode: %w", err)
-	}
-	if !result.RequestSuccessful {
-		return nil, fmt.Errorf("monnify PurchaseBill failed: %s", result.ResponseMessage)
-	}
-
-	// Return in the normalised Flutterwave shape so the engine is provider-agnostic.
-	return &FlutterwaveBillResponse{
-		Status:  "success",
-		Message: result.ResponseMessage,
-		Data: FlutterwaveBillData{
-			Reference:     result.ResponseBody.UniqueReference,
-			RechargeToken: result.ResponseBody.RechargeToken,
-		},
-	}, nil
-}
-
-// CheckBillStatus polls Monnify for the status of a pending bill payment.
-func (m *MonnifyFallbackClient) CheckBillStatus(ctx context.Context, reference string) (*FlutterwaveBillStatusResponse, error) {
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet,
-		m.baseURL+"/api/v1/bills-payment/bills/"+reference, nil)
-	if err != nil {
-		return nil, err
-	}
-	httpReq.Header.Set("Authorization", "Basic "+monnifyBasicAuth(m.apiKey, m.secretKey))
-
-	resp, err := m.client.Do(httpReq)
-	if err != nil {
-		return nil, fmt.Errorf("monnify CheckBillStatus: %w", err)
-	}
-	defer resp.Body.Close()
-
-	var result struct {
-		RequestSuccessful bool `json:"requestSuccessful"`
-		ResponseBody      struct {
-			Status            string `json:"status"`
-			CustomerReference string `json:"customerReference"`
-			ProductName       string `json:"productName"`
-		} `json:"responseBody"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("monnify CheckBillStatus decode: %w", err)
-	}
-
-	monnifyStatus := "pending"
-	if result.RequestSuccessful && result.ResponseBody.Status == "PAID" {
-		monnifyStatus = "success"
-	}
-
-	return &FlutterwaveBillStatusResponse{
-		Status: monnifyStatus,
-		Data: FlutterwaveBillStatusData{
-			CustomerReference: result.ResponseBody.CustomerReference,
-			Product:           result.ResponseBody.ProductName,
-		},
-	}, nil
-}
-
-func monnifyServiceType(category models.ServiceCategory) string {
-	switch category {
-	case models.CategoryAirtime:
-		return "AIRTIME"
-	case models.CategoryData:
-		return "DATA"
-	case models.CategoryElectricity:
-		return "ELECTRICITY"
-	default:
-		return ""
-	}
-}
-
-func monnifyBasicAuth(apiKey, secretKey string) string {
-	raw := apiKey + ":" + secretKey
-	return base64.StdEncoding.EncodeToString([]byte(raw))
 }

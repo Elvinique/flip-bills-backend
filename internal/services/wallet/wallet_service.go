@@ -42,6 +42,16 @@ type FundWalletRequest struct {
 	Provider   string `json:"provider"       binding:"required"`
 }
 
+type InitializeFundingRequest struct {
+	Amount   int64  `json:"amount"   binding:"required,min=10000"` // min ₦100 (in kobo)
+	Provider string `json:"provider" binding:"required"`           // "flutterwave" or "monnify"
+}
+
+type InitializeFundingResponse struct {
+	Reference   string `json:"reference"`
+	CheckoutURL string `json:"checkout_url,omitempty"`
+}
+
 // loyaltyAwarder is the minimal interface wallet service needs from loyalty.
 type loyaltyAwarder interface {
 	AwardPoints(ctx context.Context, userID string, sourceTxID uuid.UUID, category models.ServiceCategory, amountKobo int64)
@@ -114,38 +124,47 @@ func (s *Service) GetTransactions(ctx context.Context, userID string, page, limi
 }
 
 // FundWallet credits the wallet after a successful inbound payment webhook.
-// The payment gateway (Flutterwave/Monnify) calls this via webhook — we
-// verify the reference is new before crediting to prevent double-processing.
 func (s *Service) FundWallet(ctx context.Context, userID string, req FundWalletRequest) (*models.Transaction, error) {
-	wallet, err := s.walletRepo.FindByUserID(ctx, userID)
+	var tx *models.Transaction
+
+	err := s.walletRepo.WithinTx(ctx, func(txCtx context.Context) error {
+		wallet, err := s.walletRepo.FindByUserID(txCtx, userID)
+		if err != nil {
+			return fmt.Errorf("wallet not found")
+		}
+
+		ref := fmt.Sprintf("FUND-%s-%d", uuid.NewString()[:8], time.Now().UnixMilli())
+
+		tx = &models.Transaction{
+			ID:            uuid.New(),
+			UserID:        wallet.UserID,
+			WalletID:      wallet.ID,
+			Reference:     ref,
+			ExternalRef:   req.PaymentRef,
+			Type:          models.TxTypeCredit,
+			Category:      models.CategoryWalletFund,
+			Amount:        req.Amount,
+			BalanceBefore: wallet.Balance,
+			BalanceAfter:  wallet.Balance + req.Amount,
+			Status:        models.TxSuccess,
+			Provider:      req.Provider,
+			Narration:     fmt.Sprintf("Wallet funded via %s", req.Provider),
+			CreatedAt:     time.Now(),
+			UpdatedAt:     time.Now(),
+		}
+
+		if err := s.walletRepo.CreditBalance(txCtx, wallet.ID, req.Amount); err != nil {
+			return fmt.Errorf("credit balance: %w", err)
+		}
+
+		if err := s.walletRepo.InsertTransaction(txCtx, tx); err != nil {
+			return fmt.Errorf("insert ledger transaction: %w", err)
+		}
+
+		return nil
+	})
+
 	if err != nil {
-		return nil, fmt.Errorf("wallet not found")
-	}
-
-	ref := fmt.Sprintf("FUND-%s-%d", uuid.NewString()[:8], time.Now().UnixMilli())
-
-	tx := &models.Transaction{
-		ID:            uuid.New(),
-		UserID:        wallet.UserID,
-		WalletID:      wallet.ID,
-		Reference:     ref,
-		ExternalRef:   req.PaymentRef,
-		Type:          models.TxTypeCredit,
-		Category:      models.CategoryWalletFund,
-		Amount:        req.Amount,
-		BalanceBefore: wallet.Balance,
-		BalanceAfter:  wallet.Balance + req.Amount,
-		Status:        models.TxSuccess,
-		Provider:      req.Provider,
-		Narration:     fmt.Sprintf("Wallet funded via %s", req.Provider),
-		CreatedAt:     time.Now(),
-		UpdatedAt:     time.Now(),
-	}
-
-	// Atomic: credit balance + insert ledger entry in one DB transaction.
-	// Previously these were two separate calls — a crash between them would
-	// credit money with no audit record.
-	if err := s.walletRepo.CreditWithTransaction(ctx, wallet.ID, tx); err != nil {
 		return nil, err
 	}
 
@@ -154,13 +173,108 @@ func (s *Service) FundWallet(ctx context.Context, userID string, req FundWalletR
 		zap.String("amount_ngn", strconv.FormatFloat(koboToNGN(req.Amount), 'f', 2, 64)),
 	)
 
-	// Wallet funding earns 0 points by design (see models.EarningRate),
-	// but we still call through so the loyalty service can apply bonus campaigns.
 	if s.loyaltySvc != nil {
 		go s.loyaltySvc.AwardPoints(context.Background(), userID, tx.ID, models.CategoryWalletFund, req.Amount)
 	}
 
 	return tx, nil
+}
+
+// InitializeFunding prepares a pending transaction in the ledger and generates checkout metadata.
+func (s *Service) InitializeFunding(ctx context.Context, userID string, req InitializeFundingRequest) (*InitializeFundingResponse, error) {
+	wallet, err := s.walletRepo.FindByUserID(ctx, userID)
+	if err != nil {
+		return nil, fmt.Errorf("wallet not found")
+	}
+
+	ref := fmt.Sprintf("FUND-INIT-%s-%d", uuid.NewString()[:8], time.Now().UnixMilli())
+
+	txPlaceholder := &models.Transaction{
+		ID:            uuid.New(),
+		UserID:        wallet.UserID,
+		WalletID:      wallet.ID,
+		Reference:     ref,
+		ExternalRef:   "",
+		Type:          models.TxTypeCredit,
+		Category:      models.CategoryWalletFund,
+		Amount:        req.Amount,
+		BalanceBefore: wallet.Balance,
+		BalanceAfter:  wallet.Balance,
+		Status:        models.TxPending,
+		Provider:      req.Provider,
+		Narration:     fmt.Sprintf("Wallet funding initialized via %s", req.Provider),
+		CreatedAt:     time.Now(),
+		UpdatedAt:     time.Now(),
+	}
+
+	if err := s.walletRepo.InsertTransaction(ctx, txPlaceholder); err != nil {
+		return nil, fmt.Errorf("failed to log pending funding record: %w", err)
+	}
+
+	var checkoutURL string
+	switch req.Provider {
+	case "flutterwave":
+		checkoutURL = fmt.Sprintf("https://checkout.flutterwave.com/v3/hosted/pay/%s", ref)
+	case "monnify":
+		checkoutURL = fmt.Sprintf("https://sandbox.monnify.com/v1/checkout/pay/%s", ref)
+	default:
+		checkoutURL = fmt.Sprintf("https://checkout.flipbills.com/fallback/%s", ref)
+	}
+
+	s.log.Info("payment funding initialized securely",
+		zap.String("user_id", userID),
+		zap.String("reference", ref),
+		zap.Int64("amount_kobo", req.Amount),
+	)
+
+	return &InitializeFundingResponse{
+		Reference:   ref,
+		CheckoutURL: checkoutURL,
+	}, nil
+}
+
+// ProcessFundingWebhook settles an initialized transaction from PENDING to SUCCESS.
+func (s *Service) ProcessFundingWebhook(ctx context.Context, reference string, externalRef string, incomingAmountKobo int64) error {
+	return s.walletRepo.WithinTx(ctx, func(txCtx context.Context) error {
+		tx, err := s.walletRepo.FindTransactionByReference(txCtx, "", reference)
+		if err != nil {
+			return fmt.Errorf("transaction not found for ref %s: %w", reference, err)
+		}
+
+		if tx.Status == models.TxSuccess {
+			s.log.Warn("transaction already processed successfully", zap.String("ref", reference))
+			return nil
+		}
+		if tx.Status != models.TxPending {
+			return fmt.Errorf("transaction cannot be settled; unexpected status: %s", tx.Status)
+		}
+
+		if tx.Amount != incomingAmountKobo {
+			return fmt.Errorf("amount mismatch: initialized %d kobo, gateway paid %d kobo", tx.Amount, incomingAmountKobo)
+		}
+
+		wallet, err := s.walletRepo.FindByUserID(txCtx, tx.UserID.String())
+		if err != nil {
+			return fmt.Errorf("wallet not found for user %s: %w", tx.UserID.String(), err)
+		}
+
+		tx.BalanceBefore = wallet.Balance
+		tx.BalanceAfter = wallet.Balance + incomingAmountKobo
+
+		if err := s.walletRepo.CreditBalance(txCtx, wallet.ID, incomingAmountKobo); err != nil {
+			return fmt.Errorf("failed to credit wallet balance: %w", err)
+		}
+
+		if err := s.walletRepo.UpdateTransactionStatus(txCtx, reference, models.TxSuccess, externalRef); err != nil {
+			return fmt.Errorf("failed to update transaction status to success: %w", err)
+		}
+
+		if s.loyaltySvc != nil {
+			go s.loyaltySvc.AwardPoints(context.Background(), tx.UserID.String(), tx.ID, models.CategoryWalletFund, incomingAmountKobo)
+		}
+
+		return nil
+	})
 }
 
 // koboToNGN converts integer kobo to a human-readable NGN float.

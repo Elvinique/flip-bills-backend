@@ -7,11 +7,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/flip-bills/backend/internal/models"
 	"github.com/flip-bills/backend/internal/repository/postgres"
 )
 
-func TestConfirmFlutterwaveDeliveryFallsBackToExternalReference(t *testing.T) {
+func TestConfirmProviderDeliveryFallsBackToExternalReference(t *testing.T) {
 	provider := &fakeBillProvider{
 		statusErrors: map[string]error{
 			"FB-123": fmt.Errorf("not found"),
@@ -19,12 +18,12 @@ func TestConfirmFlutterwaveDeliveryFallsBackToExternalReference(t *testing.T) {
 	}
 	service := &Service{bills: provider}
 
-	status, err := service.confirmFlutterwaveDelivery(context.Background(), "FB-123", "BP123")
+	status, err := service.confirmProviderDelivery(context.Background(), provider, "FB-123", "BP123")
 	if err != nil {
-		t.Fatalf("confirmFlutterwaveDelivery returned error: %v", err)
+		t.Fatalf("confirmProviderDelivery returned error: %v", err)
 	}
-	if status.Data.CustomerReference != "BP123" {
-		t.Fatalf("status customer reference = %q, want BP123", status.Data.CustomerReference)
+	if status.ExternalReference != "BP123" {
+		t.Fatalf("status customer reference = %q, want BP123", status.ExternalReference)
 	}
 
 	if provider.statusCalls["FB-123"] != 1 {
@@ -35,29 +34,17 @@ func TestConfirmFlutterwaveDeliveryFallsBackToExternalReference(t *testing.T) {
 	}
 }
 
-func TestBuildBillReceiptMeta(t *testing.T) {
-	meta := buildBillReceiptMeta(
+func TestBuildReceiptEnvelope(t *testing.T) {
+	meta := buildReceiptEnvelope(
 		map[string]interface{}{
 			"phone":   "08031234567",
 			"network": "MTN",
 		},
-		&FlutterwaveBillResponse{
-			Status: "success",
-			Data: FlutterwaveBillData{
-				Reference:     "BP123",
-				RechargeToken: "1234-5678",
-			},
-		},
-		&FlutterwaveBillStatusResponse{
-			Status: "success",
-			Data: FlutterwaveBillStatusData{
-				CustomerReference: "BP123",
-				Product:           "AIRTIME",
-			},
-		},
+		[]byte(`{"purchase_data":"BP123"}`),
+		[]byte(`{"status_data":"AIRTIME"}`),
 	)
 	if len(meta) == 0 {
-		t.Fatal("expected receipt metadata")
+		t.Fatal("expected receipt metadata envelope wrapper")
 	}
 
 	var got map[string]interface{}
@@ -67,31 +54,12 @@ func TestBuildBillReceiptMeta(t *testing.T) {
 	if got["phone"] != "08031234567" {
 		t.Fatalf("phone = %v, want 08031234567", got["phone"])
 	}
-	bill, ok := got["flutterwave_bill"].(map[string]interface{})
+	bill, ok := got["provider_receipt"].(map[string]interface{})
 	if !ok {
-		t.Fatalf("flutterwave_bill missing from metadata: %#v", got)
+		t.Fatalf("provider_receipt missing from metadata: %#v", got)
 	}
-	if bill["payment_response"] == nil || bill["status_response"] == nil || bill["confirmed_at"] == nil {
-		t.Fatalf("incomplete flutterwave_bill metadata: %#v", bill)
-	}
-}
-
-func TestExtractBillToken(t *testing.T) {
-	fromPayment := extractBillToken(
-		&FlutterwaveBillResponse{Data: FlutterwaveBillData{RechargeToken: "1234-5678"}},
-		nil,
-	)
-	if fromPayment != "1234-5678" {
-		t.Fatalf("payment token = %q, want 1234-5678", fromPayment)
-	}
-
-	fromStatus := extractBillToken(nil, &FlutterwaveBillStatusResponse{
-		Data: FlutterwaveBillStatusData{
-			Extra: json.RawMessage(`{"details":{"meter_token":"9999-0000"}}`),
-		},
-	})
-	if fromStatus != "9999-0000" {
-		t.Fatalf("status token = %q, want 9999-0000", fromStatus)
+	if bill["purchase_payload"] == nil || bill["status_payload"] == nil || bill["confirmed_at"] == nil {
+		t.Fatalf("incomplete provider_receipt metadata fields: %#v", bill)
 	}
 }
 
@@ -204,9 +172,34 @@ func TestRequiresBettingRiskChallenge(t *testing.T) {
 	}
 }
 
+// ── Test Fakes ───────────────────────────────────────────────────────────────
+
 type fakeBillProvider struct {
 	statusErrors map[string]error
 	statusCalls  map[string]int
+}
+
+func (f *fakeBillProvider) PurchaseBill(context.Context, BillPurchaseParams) (*UnifiedBillResponse, error) {
+	return &UnifiedBillResponse{
+		ExternalReference: "BP123",
+		Status:            "success",
+		RawMessage:        []byte(`{"status":"success"}`),
+	}, nil
+}
+
+func (f *fakeBillProvider) CheckBillStatus(_ context.Context, reference string) (*UnifiedBillResponse, error) {
+	if f.statusCalls == nil {
+		f.statusCalls = make(map[string]int)
+	}
+	f.statusCalls[reference]++
+	if err := f.statusErrors[reference]; err != nil {
+		return nil, err
+	}
+	return &UnifiedBillResponse{
+		ExternalReference: reference,
+		Status:            "success",
+		RawMessage:        []byte(`{"status":"success"}`),
+	}, nil
 }
 
 type fakeCatalogProvider struct {
@@ -220,25 +213,4 @@ func (f *fakeCatalogProvider) FetchCatalog(context.Context) (*FlutterwaveCatalog
 		return nil, f.err
 	}
 	return f.catalog, nil
-}
-
-func (f *fakeBillProvider) PurchaseBill(context.Context, FlutterwaveBillRequest) (*FlutterwaveBillResponse, error) {
-	return nil, nil
-}
-
-func (f *fakeBillProvider) CheckBillStatus(_ context.Context, reference string) (*FlutterwaveBillStatusResponse, error) {
-	if f.statusCalls == nil {
-		f.statusCalls = make(map[string]int)
-	}
-	f.statusCalls[reference]++
-	if err := f.statusErrors[reference]; err != nil {
-		return nil, err
-	}
-	return &FlutterwaveBillStatusResponse{
-		Status: "success",
-		Data: FlutterwaveBillStatusData{
-			CustomerReference: reference,
-			Product:           string(models.CategoryAirtime),
-		},
-	}, nil
 }

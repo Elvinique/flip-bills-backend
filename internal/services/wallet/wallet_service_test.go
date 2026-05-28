@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/flip-bills/backend/internal/models"
+	"github.com/flip-bills/backend/internal/repository/postgres"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
 )
@@ -33,9 +34,71 @@ func newFakeWalletStore(balance int64) *fakeWalletStore {
 	}
 }
 
+// WithinTx simulates a database transaction runtime by simply executing the callback inline.
+func (f *fakeWalletStore) WithinTx(ctx context.Context, fn func(ctx context.Context) error) error {
+	return fn(ctx)
+}
+
+func (f *fakeWalletStore) Create(_ context.Context, _ *models.Wallet) error {
+	return nil
+}
+
 func (f *fakeWalletStore) FindByUserID(_ context.Context, _ string) (*models.Wallet, error) {
 	return f.wallet, nil
 }
+
+func (f *fakeWalletStore) DebitWithLock(_ context.Context, _ string, _ int64) (*models.Wallet, error) {
+	return f.wallet, nil
+}
+
+// CreditBalance handles wallet crediting logic during transactional runs.
+func (f *fakeWalletStore) CreditBalance(_ context.Context, _ uuid.UUID, amount int64) error {
+	if f.creditErr != nil {
+		return f.creditErr
+	}
+	f.wallet.Balance += amount
+	return nil
+}
+
+func (f *fakeWalletStore) UpdateDailyLimit(_ context.Context, _ string, _ int64) error {
+	return nil
+}
+
+// InsertTransaction logs history line items synchronously during service execution.
+func (f *fakeWalletStore) InsertTransaction(_ context.Context, tx *models.Transaction) error {
+	f.txs = append(f.txs, tx)
+	return nil
+}
+
+func (f *fakeWalletStore) UpdateTransactionStatus(_ context.Context, _ string, _ models.TransactionStatus, _ string) error {
+	return nil
+}
+
+func (f *fakeWalletStore) UpdateTransactionMeta(_ context.Context, _ string, _ []byte) error {
+	return nil
+}
+
+func (f *fakeWalletStore) ReverseDebitIfNeeded(_ context.Context, _ *models.Transaction, _ *models.Transaction) (bool, error) {
+	return true, nil
+}
+
+// CategorySpendStats implements the tracking method requested by the interface boundaries.
+func (f *fakeWalletStore) CategorySpendStats(_ context.Context, userID string, _ models.ServiceCategory, since time.Time) (*postgres.CategorySpendStats, error) {
+	return &postgres.CategorySpendStats{
+		UserID: userID,
+		Since:  since,
+		Count:  0,
+		Total:  0,
+	}, nil
+}
+
+func (f *fakeWalletStore) FindTransactionByReference(_ context.Context, _ string, _ string) (*models.Transaction, error) {
+	if len(f.txs) > 0 {
+		return f.txs[0], nil
+	}
+	return nil, nil
+}
+
 func (f *fakeWalletStore) ListTransactions(_ context.Context, _ string, limit, offset int) ([]*models.Transaction, int64, error) {
 	total := int64(len(f.txs))
 	end := offset + limit
@@ -47,6 +110,7 @@ func (f *fakeWalletStore) ListTransactions(_ context.Context, _ string, limit, o
 	}
 	return f.txs[offset:end], total, nil
 }
+
 func (f *fakeWalletStore) CreditWithTransaction(_ context.Context, _ uuid.UUID, tx *models.Transaction) error {
 	if f.creditErr != nil {
 		return f.creditErr
@@ -167,7 +231,6 @@ func TestFundWallet_AtomicLedgerEntry(t *testing.T) {
 	if err != nil {
 		t.Fatalf("FundWallet error: %v", err)
 	}
-	// CreditWithTransaction stores both credit and ledger entry atomically.
 	if len(ws.txs) != 1 {
 		t.Fatalf("expected 1 transaction record, got %d", len(ws.txs))
 	}
@@ -213,5 +276,35 @@ func TestGetTransactions_DefaultsInvalidPagination(t *testing.T) {
 	}
 	if resp.Limit != 20 {
 		t.Errorf("Limit = %d, want 20 (clamped)", resp.Limit)
+	}
+}
+func TestInitializeFunding_Success(t *testing.T) {
+	svc, ws, _ := newTestSvc(100_000, models.KYCTierOne)
+
+	req := InitializeFundingRequest{
+		Amount:   250000, // ₦2,500
+		Provider: "flutterwave",
+	}
+
+	res, err := svc.InitializeFunding(context.Background(), uuid.NewString(), req)
+	if err != nil {
+		t.Fatalf("InitializeFunding returned unexpected error: %v", err)
+	}
+
+	if res.Reference == "" {
+		t.Errorf("Expected valid traceable reference token, got empty string")
+	}
+
+	if res.CheckoutURL == "" {
+		t.Errorf("Expected valid gateway checkout destination URL string, got empty field")
+	}
+
+	// Verify that the transaction log appended exactly one pending placeholder record
+	if len(ws.txs) != 1 {
+		t.Errorf("Expected exactly 1 pending ledger item logged, found %d", len(ws.txs))
+	}
+
+	if ws.txs[0].Status != models.TxPending {
+		t.Errorf("Expected state placeholder initialization status to be 'PENDING', got %s", ws.txs[0].Status)
 	}
 }

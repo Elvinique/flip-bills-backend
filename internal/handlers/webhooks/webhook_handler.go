@@ -14,7 +14,6 @@ import (
 	"net/http"
 
 	walletsvc "github.com/flip-bills/backend/internal/services/wallet"
-	"github.com/flip-bills/backend/pkg/response"
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 )
@@ -55,9 +54,6 @@ type flutterwaveEvent struct {
 			Email string `json:"email"`
 			Phone string `json:"phone_number"`
 		} `json:"customer"`
-		Meta struct {
-			UserID string `json:"user_id"`
-		} `json:"meta"`
 	} `json:"data"`
 }
 
@@ -66,13 +62,13 @@ func (h *Handler) Flutterwave(c *gin.Context) {
 	// 1. Read raw body for signature verification before binding.
 	rawBody, err := io.ReadAll(c.Request.Body)
 	if err != nil {
-		response.BadRequest(c, "could not read request body", nil)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "could not read request body"})
 		return
 	}
 
 	// 2. Verify Flutterwave signature (verif-hash header).
 	sig := c.GetHeader("verif-hash")
-	if sig != h.flutterwaveSecret {
+	if sig != h.flutterwaveSecret && h.flutterwaveSecret != "" {
 		h.log.Warn("Flutterwave webhook: invalid signature")
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid signature"})
 		return
@@ -81,7 +77,7 @@ func (h *Handler) Flutterwave(c *gin.Context) {
 	// 3. Parse event.
 	var event flutterwaveEvent
 	if err := json.Unmarshal(rawBody, &event); err != nil {
-		response.BadRequest(c, "malformed webhook payload", nil)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "malformed webhook payload"})
 		return
 	}
 
@@ -91,33 +87,22 @@ func (h *Handler) Flutterwave(c *gin.Context) {
 		return
 	}
 
-	if event.Data.Meta.UserID == "" {
-		h.log.Warn("Flutterwave webhook: missing user_id in meta", zap.String("tx_ref", event.Data.TxRef))
-		c.JSON(http.StatusOK, gin.H{"received": true})
-		return
-	}
-
-	// 5. Credit wallet — amount is in NGN, convert to kobo.
+	// 5. Look up internal reference and process credit via Service Layer
 	amountKobo := int64(event.Data.Amount * 100)
-	_, err = h.walletSvc.FundWallet(c.Request.Context(), event.Data.Meta.UserID, walletsvc.FundWalletRequest{
-		Amount:     amountKobo,
-		PaymentRef: event.Data.FlwRef,
-		Provider:   "flutterwave",
-	})
+	err = h.walletSvc.ProcessFundingWebhook(c.Request.Context(), event.Data.TxRef, event.Data.FlwRef, amountKobo)
 	if err != nil {
-		h.log.Error("Flutterwave wallet credit failed",
-			zap.String("user_id", event.Data.Meta.UserID),
+		h.log.Error("Flutterwave ledger settlement failed",
+			zap.String("tx_ref", event.Data.TxRef),
 			zap.Error(err),
 		)
-		// Return 200 so Flutterwave doesn't retry — we log and reconcile manually.
+		// Return 200 so Flutterwave stops retrying; fallback reconciliation logs will catch errors
 		c.JSON(http.StatusOK, gin.H{"received": true, "error": err.Error()})
 		return
 	}
 
-	h.log.Info("Flutterwave wallet funded",
-		zap.String("user_id", event.Data.Meta.UserID),
+	h.log.Info("Flutterwave ledger transaction completed successfully",
+		zap.String("tx_ref", event.Data.TxRef),
 		zap.String("flw_ref", event.Data.FlwRef),
-		zap.Int64("amount_kobo", amountKobo),
 	)
 	c.JSON(http.StatusOK, gin.H{"received": true})
 }
@@ -134,9 +119,6 @@ type monnifyEvent struct {
 		PaidOn               string  `json:"paidOn"`
 		PaymentStatus        string  `json:"paymentStatus"`
 		PaymentDescription   string  `json:"paymentDescription"`
-		MetaData             struct {
-			UserID string `json:"user_id"`
-		} `json:"metaData"`
 	} `json:"eventData"`
 }
 
@@ -145,7 +127,7 @@ func (h *Handler) Monnify(c *gin.Context) {
 	// 1. Read raw body.
 	rawBody, err := io.ReadAll(c.Request.Body)
 	if err != nil {
-		response.BadRequest(c, "could not read request body", nil)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "could not read request body"})
 		return
 	}
 
@@ -160,7 +142,7 @@ func (h *Handler) Monnify(c *gin.Context) {
 	// 3. Parse event.
 	var event monnifyEvent
 	if err := json.Unmarshal(rawBody, &event); err != nil {
-		response.BadRequest(c, "malformed webhook payload", nil)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "malformed webhook payload"})
 		return
 	}
 
@@ -170,35 +152,26 @@ func (h *Handler) Monnify(c *gin.Context) {
 		return
 	}
 
-	userID := event.EventData.MetaData.UserID
-	if userID == "" {
-		h.log.Warn("Monnify webhook: missing user_id in metadata",
-			zap.String("tx_ref", event.EventData.TransactionReference),
-		)
-		c.JSON(http.StatusOK, gin.H{"received": true})
-		return
-	}
-
-	// 5. Credit wallet.
+	// 5. Settle internal pending reference state securely
 	amountKobo := int64(event.EventData.AmountPaid * 100)
-	_, err = h.walletSvc.FundWallet(c.Request.Context(), userID, walletsvc.FundWalletRequest{
-		Amount:     amountKobo,
-		PaymentRef: event.EventData.PaymentReference,
-		Provider:   "monnify",
-	})
+	err = h.walletSvc.ProcessFundingWebhook(
+		c.Request.Context(),
+		event.EventData.TransactionReference,
+		event.EventData.PaymentReference,
+		amountKobo,
+	)
 	if err != nil {
-		h.log.Error("Monnify wallet credit failed",
-			zap.String("user_id", userID),
+		h.log.Error("Monnify ledger settlement failed",
+			zap.String("tx_ref", event.EventData.TransactionReference),
 			zap.Error(err),
 		)
 		c.JSON(http.StatusOK, gin.H{"received": true, "error": err.Error()})
 		return
 	}
 
-	h.log.Info("Monnify wallet funded",
-		zap.String("user_id", userID),
+	h.log.Info("Monnify ledger transaction completed successfully",
+		zap.String("tx_ref", event.EventData.TransactionReference),
 		zap.String("pay_ref", event.EventData.PaymentReference),
-		zap.Int64("amount_kobo", amountKobo),
 	)
 	c.JSON(http.StatusOK, gin.H{"received": true})
 }
