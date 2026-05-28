@@ -12,7 +12,7 @@ const (
 	BookingConfirmed   TravelBookingStatus = "confirmed"
 	BookingPending     TravelBookingStatus = "pending"
 	BookingRescheduled TravelBookingStatus = "rescheduled"
-	BookingCancelled TravelBookingStatus = "canceled"
+	BookingCancelled   TravelBookingStatus = "canceled"
 	BookingBoarded     TravelBookingStatus = "boarded"
 )
 
