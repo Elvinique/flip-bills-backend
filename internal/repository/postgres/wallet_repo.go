@@ -301,7 +301,7 @@ func (r *WalletRepository) CreditWithTransaction(ctx context.Context, walletID u
 	if err != nil {
 		return err
 	}
-	defer func() { _ = tx.Rollback(ctx) }()
+	defer func() { _ = dbTx.Rollback(ctx) }()
 
 	// 1. Credit balance.
 	_, err = dbTx.Exec(ctx,

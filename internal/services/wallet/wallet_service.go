@@ -12,6 +12,10 @@ import (
 	"go.uber.org/zap"
 )
 
+// Compile-time proof that concrete types satisfy the interfaces.
+var _ walletStore = (*postgres.WalletRepository)(nil)
+var _ userStore   = (*postgres.UserRepository)(nil)
+
 // ── DTOs ─────────────────────────────────────────────────────────────────────
 
 type BalanceResponse struct {
@@ -46,8 +50,8 @@ type loyaltyAwarder interface {
 // ── Service ───────────────────────────────────────────────────────────────────
 
 type Service struct {
-	walletRepo  *postgres.WalletRepository
-	userRepo    *postgres.UserRepository
+	walletRepo  walletStore
+	userRepo    userStore
 	loyaltySvc  loyaltyAwarder
 	log         *zap.Logger
 }

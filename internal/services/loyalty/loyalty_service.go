@@ -49,13 +49,13 @@ type RedeemResponse struct {
 // ── Service ───────────────────────────────────────────────────────────────────
 
 type Service struct {
-	loyaltyRepo *postgres.LoyaltyRepository
-	walletRepo  *postgres.WalletRepository
+	loyaltyRepo loyaltyRepo
+	walletRepo  walletRepo
 	log         *zap.Logger
 }
 
 func NewService(
-	loyaltyRepo *postgres.LoyaltyRepository,
+	loyaltyRepo loyaltyRepo,
 	walletRepo *postgres.WalletRepository,
 	log *zap.Logger,
 ) *Service {

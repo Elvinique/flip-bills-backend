@@ -21,14 +21,14 @@ type BillerCallFn func(ctx context.Context) (externalRef string, err error)
 
 // Engine holds shared dependencies for reconciliation operations.
 type Engine struct {
-	walletRepo *postgres.WalletRepository
+	walletRepo walletRepo
 	log        *zap.Logger
 	timeout    time.Duration
 }
 
-func NewEngine(walletRepo *postgres.WalletRepository, log *zap.Logger, timeoutSeconds int) *Engine {
+func NewEngine(repo *postgres.WalletRepository, log *zap.Logger, timeoutSeconds int) *Engine {
 	return &Engine{
-		walletRepo: walletRepo,
+		walletRepo: repo,
 		log:        log,
 		timeout:    time.Duration(timeoutSeconds) * time.Second,
 	}

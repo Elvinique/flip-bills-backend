@@ -14,6 +14,14 @@ import (
 	"go.uber.org/zap"
 )
 
+// Compile-time proof that concrete types satisfy the interfaces defined in deps.go.
+// If a repo method is renamed or removed, this line fails at build time — not at runtime.
+var _ userRepo   = (*postgres.UserRepository)(nil)
+var _ walletRepo = (*postgres.WalletRepository)(nil)
+var _ otpRepo    = (*postgres.OTPRepository)(nil)
+var _ smsService = (*notifications.SMSService)(nil)
+var _ jwtManager = (*jwtpkg.Manager)(nil)
+
 // ── DTOs ─────────────────────────────────────────────────────────────────────
 
 type RegisterRequest struct {
@@ -51,11 +59,11 @@ type TokenPair struct {
 // ── Service ───────────────────────────────────────────────────────────────────
 
 type Service struct {
-	userRepo   *postgres.UserRepository
-	walletRepo *postgres.WalletRepository
-	otpRepo    *postgres.OTPRepository
-	sms        *notifications.SMSService
-	jwt        *jwtpkg.Manager
+	userRepo   userRepo
+	walletRepo walletRepo
+	otpRepo    otpRepo
+	sms        smsService
+	jwt        jwtManager
 	log        *zap.Logger
 }
 
