@@ -407,3 +407,28 @@ func (r *WalletRepository) CreditWithTransaction(ctx context.Context, walletID u
 	}
 	return nil
 }
+
+// FindCreditByExternalRef checks whether a payment gateway reference has
+// already been credited — used by FundWallet for idempotency.
+func (r *WalletRepository) FindCreditByExternalRef(ctx context.Context, externalRef string) (*models.Transaction, error) {
+	row := r.db.QueryRow(ctx,
+		`SELECT id, user_id, wallet_id, reference, external_ref, type, category,
+		        amount, fee, balance_before, balance_after, status, provider,
+		        narration, meta, reversed_tx_id, created_at, updated_at
+		 FROM transactions
+		 WHERE external_ref = $1 AND type = 'credit'
+		 LIMIT 1`,
+		externalRef,
+	)
+	tx := &models.Transaction{}
+	err := row.Scan(
+		&tx.ID, &tx.UserID, &tx.WalletID, &tx.Reference, &tx.ExternalRef,
+		&tx.Type, &tx.Category, &tx.Amount, &tx.Fee,
+		&tx.BalanceBefore, &tx.BalanceAfter, &tx.Status, &tx.Provider,
+		&tx.Narration, &tx.Meta, &tx.ReversedTxID, &tx.CreatedAt, &tx.UpdatedAt,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return tx, nil
+}

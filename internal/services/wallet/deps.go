@@ -10,6 +10,7 @@ import (
 )
 
 type walletStore interface {
+	FindCreditByExternalRef(ctx context.Context, externalRef string) (*models.Transaction, error)
 	WithinTx(ctx context.Context, fn func(ctx context.Context) error) error
 	Create(ctx context.Context, w *models.Wallet) error
 	FindByUserID(ctx context.Context, userID string) (*models.Wallet, error)

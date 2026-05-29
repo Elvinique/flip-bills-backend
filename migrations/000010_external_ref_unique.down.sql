@@ -1,0 +1,1 @@
+DROP INDEX IF EXISTS transactions_external_ref_credit_unique_idx;

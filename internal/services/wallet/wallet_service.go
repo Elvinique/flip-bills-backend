@@ -136,21 +136,23 @@ func (s *Service) FundWallet(ctx context.Context, userID string, req FundWalletR
 		ref := fmt.Sprintf("FUND-%s-%d", uuid.NewString()[:8], time.Now().UnixMilli())
 
 		tx = &models.Transaction{
-			ID:            uuid.New(),
-			UserID:        wallet.UserID.String(),
-			WalletID:      wallet.ID,
-			Reference:     ref,
-			ExternalRef:   req.PaymentRef,
-			Type:          models.TxTypeCredit,
-			Category:      models.CategoryWalletFund,
-			Amount:        req.Amount,
-			BalanceBefore: wallet.Balance,
-			BalanceAfter:  wallet.Balance + req.Amount,
-			Status:        models.TxSuccess,
-			Provider:      req.Provider,
-			Narration:     fmt.Sprintf("Wallet funded via %s", req.Provider),
-			CreatedAt:     time.Now(),
-			UpdatedAt:     time.Now(),
+			ID:             uuid.New(),
+			UserID:         wallet.UserID.String(), // Fixed type mapping: UUID array to clean primitive string
+			WalletID:       wallet.ID,
+			Reference:      ref,
+			ExternalRef:    req.PaymentRef,
+			Type:           models.TxTypeCredit,
+			Category:       models.CategoryWalletFund,
+			Amount:         req.Amount,
+			CommissionKobo: 0, // No utility vendor fee applied to straight wallet funding
+			Fee:            0,
+			BalanceBefore:  wallet.Balance,
+			BalanceAfter:   wallet.Balance + req.Amount,
+			Status:         models.TxSuccess,
+			Provider:       req.Provider,
+			Narration:      fmt.Sprintf("Wallet funded via %s", req.Provider),
+			CreatedAt:      time.Now(),
+			UpdatedAt:      time.Now(),
 		}
 
 		if err := s.walletRepo.CreditBalance(txCtx, wallet.ID, req.Amount); err != nil {
@@ -190,21 +192,23 @@ func (s *Service) InitializeFunding(ctx context.Context, userID string, req Init
 	ref := fmt.Sprintf("FUND-INIT-%s-%d", uuid.NewString()[:8], time.Now().UnixMilli())
 
 	txPlaceholder := &models.Transaction{
-		ID:            uuid.New(),
-		UserID:        wallet.UserID.String(),
-		WalletID:      wallet.ID,
-		Reference:     ref,
-		ExternalRef:   "",
-		Type:          models.TxTypeCredit,
-		Category:      models.CategoryWalletFund,
-		Amount:        req.Amount,
-		BalanceBefore: wallet.Balance,
-		BalanceAfter:  wallet.Balance,
-		Status:        models.TxPending,
-		Provider:      req.Provider,
-		Narration:     fmt.Sprintf("Wallet funding initialized via %s", req.Provider),
-		CreatedAt:     time.Now(),
-		UpdatedAt:     time.Now(),
+		ID:             uuid.New(),
+		UserID:         wallet.UserID.String(), // Fixed type mapping: UUID array to clean primitive string
+		WalletID:       wallet.ID,
+		Reference:      ref,
+		ExternalRef:    "",
+		Type:           models.TxTypeCredit,
+		Category:       models.CategoryWalletFund,
+		Amount:         req.Amount,
+		CommissionKobo: 0,
+		Fee:            0,
+		BalanceBefore:  wallet.Balance,
+		BalanceAfter:   wallet.Balance,
+		Status:         models.TxPending,
+		Provider:       req.Provider,
+		Narration:      fmt.Sprintf("Wallet funding initialized via %s", req.Provider),
+		CreatedAt:      time.Now(),
+		UpdatedAt:      time.Now(),
 	}
 
 	if err := s.walletRepo.InsertTransaction(ctx, txPlaceholder); err != nil {
@@ -253,7 +257,7 @@ func (s *Service) ProcessFundingWebhook(ctx context.Context, reference string, e
 			return fmt.Errorf("amount mismatch: initialized %d kobo, gateway paid %d kobo", tx.Amount, incomingAmountKobo)
 		}
 
-		wallet, err := s.walletRepo.FindByUserID(txCtx, tx.UserID)
+		wallet, err := s.walletRepo.FindByUserID(txCtx, tx.UserID) // tx.UserID is a plain string primitive
 		if err != nil {
 			return fmt.Errorf("wallet not found for user %s: %w", tx.UserID, err)
 		}
