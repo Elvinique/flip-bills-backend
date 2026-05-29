@@ -64,22 +64,23 @@ const (
 
 // Transaction is the immutable audit ledger — never updated, only inserted.
 type Transaction struct {
-	ID            uuid.UUID         `db:"id"               json:"id"`
-	UserID        uuid.UUID         `db:"user_id"          json:"user_id"`
-	WalletID      uuid.UUID         `db:"wallet_id"        json:"wallet_id"`
-	Reference     string            `db:"reference"        json:"reference"`    // internal idempotency key
-	ExternalRef   string            `db:"external_ref"     json:"external_ref"` // partner/aggregator ref
-	Type          TransactionType   `db:"type"             json:"type"`
-	Category      ServiceCategory   `db:"category"         json:"category"`
-	Amount        int64             `db:"amount"           json:"amount"` // in kobo
-	Fee           int64             `db:"fee"              json:"fee"`    // in kobo
-	BalanceBefore int64             `db:"balance_before"   json:"balance_before"`
-	BalanceAfter  int64             `db:"balance_after"    json:"balance_after"`
-	Status        TransactionStatus `db:"status"           json:"status"`
-	Provider      string            `db:"provider"         json:"provider"` // flutterwave|monnify|interswitch
-	Narration     string            `db:"narration"        json:"narration"`
-	Meta          []byte            `db:"meta"             json:"meta,omitempty"` // JSONB for biller-specific data
-	ReversedTxID  *uuid.UUID        `db:"reversed_tx_id"   json:"reversed_tx_id,omitempty"`
-	CreatedAt     time.Time         `db:"created_at"       json:"created_at"`
-	UpdatedAt     time.Time         `db:"updated_at"       json:"updated_at"`
+	ID             uuid.UUID         `json:"id"`
+	UserID         string            `json:"user_id"`
+	WalletID       uuid.UUID         `json:"wallet_id"`
+	Reference      string            `json:"reference"`
+	ExternalRef    string            `json:"external_ref,omitempty"`
+	Type           TransactionType   `json:"type"`
+	Category       ServiceCategory   `json:"category"`
+	Amount         int64             `json:"amount"`
+	CommissionKobo int64             `json:"commission_kobo"` // Platform cut
+	Fee            int64             `json:"fee"`             // Required by wallet_repo
+	BalanceBefore  int64             `json:"balance_before"`
+	BalanceAfter   int64             `json:"balance_after"`
+	Status         TransactionStatus `json:"status"`
+	Provider       string            `json:"provider"`
+	Narration      string            `json:"narration"`
+	Meta           []byte            `json:"meta,omitempty"`
+	ReversedTxID   *uuid.UUID        `json:"reversed_tx_id,omitempty"` // Required by wallet_repo
+	CreatedAt      time.Time         `json:"created_at"`
+	UpdatedAt      time.Time         `json:"updated_at"`
 }

@@ -72,7 +72,7 @@ func TestTransactionImmutability(t *testing.T) {
 	// Transactions should only ever have status updated, never amount
 	tx := Transaction{
 		ID:            uuid.New(),
-		UserID:        uuid.New(),
+		UserID:        uuid.New().String(),
 		WalletID:      uuid.New(),
 		Reference:     "FB-TEST-001",
 		Type:          TxTypeDebit,

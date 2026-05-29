@@ -74,7 +74,7 @@ func newEngine(repo *fakeWalletRepo) *Engine {
 func testTx(userID, walletID uuid.UUID, amount int64) *models.Transaction {
 	return &models.Transaction{
 		ID:        uuid.New(),
-		UserID:    userID,
+		UserID:    userID.String(),
 		WalletID:  walletID,
 		Reference: "TEST-" + uuid.NewString()[:8],
 		Type:      models.TxTypeDebit,

@@ -165,7 +165,7 @@ func (s *Service) RedeemPoints(ctx context.Context, userID string, req RedeemReq
 	// Write wallet transaction record.
 	walletTx := &models.Transaction{
 		ID:            uuid.New(),
-		UserID:        wallet.UserID,
+		UserID:        wallet.UserID.String(),
 		WalletID:      wallet.ID,
 		Reference:     fmt.Sprintf("LYL-%s", uuid.NewString()[:8]),
 		Type:          models.TxTypeCredit,

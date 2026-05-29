@@ -58,7 +58,6 @@ func (r *WalletRepository) getRunner(ctx context.Context) TxRunner {
 
 // WithinTx executes a set of repository actions inside a single standalone transaction block.
 func (r *WalletRepository) WithinTx(ctx context.Context, fn func(ctx context.Context) error) error {
-	// If a transaction already exists in the context, reuse it instead of nesting.
 	if _, ok := ctx.Value(txKey{}).(pgx.Tx); ok {
 		return fn(ctx)
 	}
@@ -173,11 +172,11 @@ func (r *WalletRepository) UpdateDailyLimit(ctx context.Context, userID string, 
 func (r *WalletRepository) InsertTransaction(ctx context.Context, tx *models.Transaction) error {
 	_, err := r.getRunner(ctx).Exec(ctx,
 		`INSERT INTO transactions
-         (id,user_id,wallet_id,reference,external_ref,type,category,amount,fee,
+         (id,user_id,wallet_id,reference,external_ref,type,category,amount,commission_kobo,fee,
           balance_before,balance_after,status,provider,narration,meta,reversed_tx_id,created_at,updated_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`,
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)`,
 		tx.ID, tx.UserID, tx.WalletID, tx.Reference, tx.ExternalRef,
-		tx.Type, tx.Category, tx.Amount, tx.Fee,
+		tx.Type, tx.Category, tx.Amount, tx.CommissionKobo, tx.Fee,
 		tx.BalanceBefore, tx.BalanceAfter, tx.Status, tx.Provider,
 		tx.Narration, tx.Meta, tx.ReversedTxID, tx.CreatedAt, tx.UpdatedAt,
 	)
@@ -241,11 +240,11 @@ func (r *WalletRepository) ReverseDebitIfNeeded(ctx context.Context, original *m
 
 	_, err = runner.Exec(ctx,
 		`INSERT INTO transactions
-         (id,user_id,wallet_id,reference,external_ref,type,category,amount,fee,
+         (id,user_id,wallet_id,reference,external_ref,type,category,amount,commission_kobo,fee,
           balance_before,balance_after,status,provider,narration,meta,reversed_tx_id,created_at,updated_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`,
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)`,
 		reversal.ID, reversal.UserID, reversal.WalletID, reversal.Reference, reversal.ExternalRef,
-		reversal.Type, reversal.Category, reversal.Amount, reversal.Fee,
+		reversal.Type, reversal.Category, reversal.Amount, reversal.CommissionKobo, reversal.Fee,
 		reversal.BalanceBefore, reversal.BalanceAfter, reversal.Status, reversal.Provider,
 		reversal.Narration, reversal.Meta, reversal.ReversedTxID, reversal.CreatedAt, reversal.UpdatedAt,
 	)
@@ -303,14 +302,14 @@ func (r *WalletRepository) FindTransactionByReference(ctx context.Context, userI
 	var args []any
 
 	if userID == "" {
-		query = `SELECT id,user_id,wallet_id,reference,external_ref,type,category,amount,fee,
-	                balance_before,balance_after,status,provider,narration,meta,reversed_tx_id,created_at,updated_at
-	         FROM transactions WHERE reference=$1`
+		query = `SELECT id,user_id,wallet_id,reference,external_ref,type,category,amount,commission_kobo,fee,
+                    balance_before,balance_after,status,provider,narration,meta,reversed_tx_id,created_at,updated_at
+             FROM transactions WHERE reference=$1`
 		args = []any{reference}
 	} else {
-		query = `SELECT id,user_id,wallet_id,reference,external_ref,type,category,amount,fee,
-	                balance_before,balance_after,status,provider,narration,meta,reversed_tx_id,created_at,updated_at
-	         FROM transactions WHERE user_id=$1 AND reference=$2`
+		query = `SELECT id,user_id,wallet_id,reference,external_ref,type,category,amount,commission_kobo,fee,
+                    balance_before,balance_after,status,provider,narration,meta,reversed_tx_id,created_at,updated_at
+             FROM transactions WHERE user_id=$1 AND reference=$2`
 		args = []any{userID, reference}
 	}
 
@@ -318,7 +317,7 @@ func (r *WalletRepository) FindTransactionByReference(ctx context.Context, userI
 	t := &models.Transaction{}
 	if err := row.Scan(
 		&t.ID, &t.UserID, &t.WalletID, &t.Reference, &t.ExternalRef,
-		&t.Type, &t.Category, &t.Amount, &t.Fee,
+		&t.Type, &t.Category, &t.Amount, &t.CommissionKobo, &t.Fee,
 		&t.BalanceBefore, &t.BalanceAfter, &t.Status, &t.Provider,
 		&t.Narration, &t.Meta, &t.ReversedTxID, &t.CreatedAt, &t.UpdatedAt,
 	); err != nil {
@@ -337,7 +336,7 @@ func (r *WalletRepository) ListTransactions(ctx context.Context, userID string, 
 	}
 
 	rows, err := r.getRunner(ctx).Query(ctx,
-		`SELECT id,user_id,wallet_id,reference,external_ref,type,category,amount,fee,
+		`SELECT id,user_id,wallet_id,reference,external_ref,type,category,amount,commission_kobo,fee,
                 balance_before,balance_after,status,provider,narration,meta,reversed_tx_id,created_at,updated_at
          FROM transactions
          WHERE user_id=$1
@@ -355,7 +354,7 @@ func (r *WalletRepository) ListTransactions(ctx context.Context, userID string, 
 		t := &models.Transaction{}
 		if err := rows.Scan(
 			&t.ID, &t.UserID, &t.WalletID, &t.Reference, &t.ExternalRef,
-			&t.Type, &t.Category, &t.Amount, &t.Fee,
+			&t.Type, &t.Category, &t.Amount, &t.CommissionKobo, &t.Fee,
 			&t.BalanceBefore, &t.BalanceAfter, &t.Status, &t.Provider,
 			&t.Narration, &t.Meta, &t.ReversedTxID, &t.CreatedAt, &t.UpdatedAt,
 		); err != nil {
@@ -391,11 +390,11 @@ func (r *WalletRepository) CreditWithTransaction(ctx context.Context, walletID u
 
 	_, err = runner.Exec(ctx,
 		`INSERT INTO transactions
-         (id,user_id,wallet_id,reference,external_ref,type,category,amount,fee,
+         (id,user_id,wallet_id,reference,external_ref,type,category,amount,commission_kobo,fee,
           balance_before,balance_after,status,provider,narration,meta,reversed_tx_id,created_at,updated_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`,
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)`,
 		tx.ID, tx.UserID, tx.WalletID, tx.Reference, tx.ExternalRef,
-		tx.Type, tx.Category, tx.Amount, tx.Fee,
+		tx.Type, tx.Category, tx.Amount, tx.CommissionKobo, tx.Fee,
 		tx.BalanceBefore, tx.BalanceAfter, tx.Status, tx.Provider,
 		tx.Narration, tx.Meta, tx.ReversedTxID, tx.CreatedAt, tx.UpdatedAt,
 	)

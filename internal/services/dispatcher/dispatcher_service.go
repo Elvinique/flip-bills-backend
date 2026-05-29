@@ -304,7 +304,7 @@ func (s *Service) RefundBooking(ctx context.Context, userID, bookingID string) (
 	// 5. Write refund transaction.
 	refundTx := &models.Transaction{
 		ID:            uuid.New(),
-		UserID:        wallet.UserID,
+		UserID:        wallet.UserID.String(),
 		WalletID:      wallet.ID,
 		Reference:     fmt.Sprintf("DISP-REF-%s", uuid.NewString()[:8]),
 		Type:          models.TxTypeCredit,

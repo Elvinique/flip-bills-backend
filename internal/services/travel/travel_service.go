@@ -239,7 +239,7 @@ func (s *Service) BookBus(ctx context.Context, userID string, req BusBookRequest
 	ref := fmt.Sprintf("FB-BUS-%s", uuid.NewString()[:8])
 	tx := &models.Transaction{
 		ID:            txID,
-		UserID:        wallet.UserID,
+		UserID:        wallet.UserID.String(),
 		WalletID:      wallet.ID,
 		Reference:     ref,
 		Type:          models.TxTypeDebit,
@@ -363,7 +363,7 @@ func (s *Service) BookFlight(ctx context.Context, userID string, req FlightBookR
 	ref := fmt.Sprintf("FB-FLIGHT-%s", uuid.NewString()[:8])
 	tx := &models.Transaction{
 		ID:            txID,
-		UserID:        wallet.UserID,
+		UserID:        wallet.UserID.String(),
 		WalletID:      wallet.ID,
 		Reference:     ref,
 		Type:          models.TxTypeDebit,

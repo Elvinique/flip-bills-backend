@@ -137,7 +137,7 @@ func (s *Service) FundWallet(ctx context.Context, userID string, req FundWalletR
 
 		tx = &models.Transaction{
 			ID:            uuid.New(),
-			UserID:        wallet.UserID,
+			UserID:        wallet.UserID.String(),
 			WalletID:      wallet.ID,
 			Reference:     ref,
 			ExternalRef:   req.PaymentRef,
@@ -191,7 +191,7 @@ func (s *Service) InitializeFunding(ctx context.Context, userID string, req Init
 
 	txPlaceholder := &models.Transaction{
 		ID:            uuid.New(),
-		UserID:        wallet.UserID,
+		UserID:        wallet.UserID.String(),
 		WalletID:      wallet.ID,
 		Reference:     ref,
 		ExternalRef:   "",
@@ -253,9 +253,9 @@ func (s *Service) ProcessFundingWebhook(ctx context.Context, reference string, e
 			return fmt.Errorf("amount mismatch: initialized %d kobo, gateway paid %d kobo", tx.Amount, incomingAmountKobo)
 		}
 
-		wallet, err := s.walletRepo.FindByUserID(txCtx, tx.UserID.String())
+		wallet, err := s.walletRepo.FindByUserID(txCtx, tx.UserID)
 		if err != nil {
-			return fmt.Errorf("wallet not found for user %s: %w", tx.UserID.String(), err)
+			return fmt.Errorf("wallet not found for user %s: %w", tx.UserID, err)
 		}
 
 		tx.BalanceBefore = wallet.Balance
@@ -270,7 +270,7 @@ func (s *Service) ProcessFundingWebhook(ctx context.Context, reference string, e
 		}
 
 		if s.loyaltySvc != nil {
-			go s.loyaltySvc.AwardPoints(context.Background(), tx.UserID.String(), tx.ID, models.CategoryWalletFund, incomingAmountKobo)
+			go s.loyaltySvc.AwardPoints(context.Background(), tx.UserID, tx.ID, models.CategoryWalletFund, incomingAmountKobo)
 		}
 
 		return nil

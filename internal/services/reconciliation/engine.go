@@ -94,7 +94,7 @@ func (e *Engine) ExecuteWithFallback(
 		UpdatedAt: time.Now(),
 	}
 
-	_, debitErr := e.walletRepo.DebitWithLock(ctx, tx.UserID.String(), tx.Amount)
+	_, debitErr := e.walletRepo.DebitWithLock(ctx, tx.UserID, tx.Amount)
 	if debitErr != nil {
 		return "", fmt.Errorf("fallback re-debit failed: %w", debitErr)
 	}

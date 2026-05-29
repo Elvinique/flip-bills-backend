@@ -198,7 +198,7 @@ func (s *Service) executeVAS(
 	metaBytes, _ := json.Marshal(meta)
 	tx := &models.Transaction{
 		ID:            uuid.New(),
-		UserID:        wallet.UserID,
+		UserID:        wallet.UserID.String(),
 		WalletID:      wallet.ID,
 		Reference:     ref,
 		Type:          models.TxTypeDebit,
