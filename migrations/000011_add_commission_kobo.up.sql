@@ -1,0 +1,1 @@
+ALTER TABLE transactions ADD COLUMN IF NOT EXISTS commission_kobo BIGINT NOT NULL DEFAULT 0;
