@@ -91,8 +91,6 @@ func main() {
 	reconEngine := reconcile.NewEngine(walletRepo, log, cfg.Recon.TimeoutSeconds)
 	flutterwaveBills := utilitysvc.NewFlutterwaveClient(cfg.Pay.FlutterwaveKey, cfg.Pay.FlutterwaveBaseURL)
 
-	// Monnify is the fallback aggregator — used when Flutterwave times out (PRD 3A).
-	// If keys are blank the fallback is disabled and the engine reverses on primary failure.
 	var monnifyFallback utilitysvc.BillProvider
 	if cfg.Pay.MonnifyAPIKey != "" && cfg.Pay.MonnifySecret != "" {
 		monnifyFallback = utilitysvc.NewMonnifyFallbackClient(
@@ -151,6 +149,20 @@ func main() {
 	r.Use(gin.Recovery())
 	r.Use(middleware.RateLimit(rdb, 100, time.Minute))
 
+	// OPTIMIZED: Native CORS Handling Middleware Interceptor to unblock Web browsers
+	r.Use(func(c *gin.Context) {
+		c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
+		c.Writer.Header().Set("Access-Control-Allow-Credentials", "true")
+		c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, accept, origin, Cache-Control, X-Requested-With")
+		c.Writer.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS, GET, PUT, DELETE")
+
+		if c.Request.Method == "OPTIONS" {
+			c.AbortWithStatus(http.StatusNoContent)
+			return
+		}
+		c.Next()
+	})
+
 	r.GET("/health", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "ok", "service": "flip-bills-api", "version": "2.0.0"})
 	})
@@ -165,7 +177,7 @@ func main() {
 
 	v1 := r.Group("/api/v1")
 
-	// Public
+	// Public Auth Group
 	auth := v1.Group("/auth")
 	{
 		auth.POST("/register", authH.Register)
@@ -175,7 +187,14 @@ func main() {
 		auth.POST("/refresh", authH.RefreshToken)
 	}
 
-	// Protected
+	// OPTIMIZED: Exposed Public Travel Group (Bypasses JWT auth validation so anonymous lookups work)
+	publicTravel := v1.Group("/travel")
+	{
+		publicTravel.GET("/bus/search", travelH.SearchBus)
+		publicTravel.GET("/flight/search", travelH.SearchFlights)
+	}
+
+	// Protected Group - Remaining transactional engines stay guarded by JWT hardware auth middleware
 	p := v1.Group("")
 	p.Use(middleware.Auth(jwtManager))
 	{
@@ -202,9 +221,8 @@ func main() {
 
 		travel := p.Group("/travel")
 		{
-			travel.GET("/bus/search", travelH.SearchBus)
+			// Protected checkout booking execution layers requiring active balances
 			travel.POST("/bus/book", travelH.BookBus)
-			travel.GET("/flight/search", travelH.SearchFlights)
 			travel.POST("/flight/book", travelH.BookFlight)
 			travel.GET("/bookings", travelH.GetMyBookings)
 			travel.GET("/bookings/:id", travelH.GetBooking)
@@ -249,12 +267,9 @@ func main() {
 }
 
 func buildBusOperators(cfg *config.Config, log *zap.Logger) []operators.BusOperator {
-	// Automatically fallback to our standardized sandbox implementations
-	// to guarantee seamless local testing and keep the app engine compiling.
 	log.Warn("initializing transit module with unified sandbox bus operator profiles")
 	return []operators.BusOperator{
 		operators.NewSandboxBusOperator("GIGM", "God is Good Motors"),
 		operators.NewSandboxBusOperator("ABC", "ABC Transport"),
 	}
 }
-
