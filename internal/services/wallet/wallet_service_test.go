@@ -24,13 +24,14 @@ func newFakeWalletStore(balance int64) *fakeWalletStore {
 	return &fakeWalletStore{
 		wallet: &models.Wallet{
 			ID:         uuid.New(),
-			UserID:     uuid.New(),
+			UserID:     uuid.New(), // Kept as raw uuid.UUID to align with models.Wallet definition
 			Balance:    balance,
 			Currency:   models.NGN,
 			DailyLimit: 5_000_000,
 			CreatedAt:  time.Now(),
 			UpdatedAt:  time.Now(),
 		},
+		txs: make([]*models.Transaction, 0),
 	}
 }
 
@@ -82,6 +83,16 @@ func (f *fakeWalletStore) ReverseDebitIfNeeded(_ context.Context, _ *models.Tran
 	return true, nil
 }
 
+// FindCreditByExternalRef satisfies the interface contract exactly by accepting only context and the external ref string.
+func (f *fakeWalletStore) FindCreditByExternalRef(_ context.Context, extRef string) (*models.Transaction, error) {
+	for _, tx := range f.txs {
+		if tx.ExternalRef == extRef && tx.Type == models.TxTypeCredit {
+			return tx, nil
+		}
+	}
+	return nil, nil
+}
+
 // CategorySpendStats implements the tracking method requested by the interface boundaries.
 func (f *fakeWalletStore) CategorySpendStats(_ context.Context, userID string, _ models.ServiceCategory, since time.Time) (*postgres.CategorySpendStats, error) {
 	return &postgres.CategorySpendStats{
@@ -94,7 +105,9 @@ func (f *fakeWalletStore) CategorySpendStats(_ context.Context, userID string, _
 
 func (f *fakeWalletStore) FindTransactionByReference(_ context.Context, _ string, _ string) (*models.Transaction, error) {
 	if len(f.txs) > 0 {
-		return f.txs[0], nil
+		for _, tx := range f.txs {
+			return tx, nil
+		}
 	}
 	return nil, nil
 }
@@ -152,7 +165,13 @@ func newTestSvc(walletBalance int64, kycTier models.KYCTier) (*Service, *fakeWal
 	ws := newFakeWalletStore(walletBalance)
 	us := newFakeUserStore(kycTier)
 	loy := &fakeLoyalty{}
-	svc := &Service{walletRepo: ws, userRepo: us, loyaltySvc: loy, log: nopLog()}
+
+	svc := &Service{
+		walletRepo: ws,
+		userRepo:   us,
+		loyaltySvc: loy,
+		log:        nopLog(),
+	}
 	return svc, ws, loy
 }
 
@@ -244,8 +263,11 @@ func TestGetTransactions_Pagination(t *testing.T) {
 
 	for i := 0; i < 25; i++ {
 		ws.txs = append(ws.txs, &models.Transaction{
-			ID: uuid.New(), Reference: uuid.NewString(),
-			Type: models.TxTypeCredit, Status: models.TxSuccess,
+			ID:        uuid.New(),
+			Reference: uuid.NewString(),
+			Type:      models.TxTypeCredit,
+			Status:    models.TxSuccess,
+			UserID:    uuid.NewString(),
 		})
 	}
 
@@ -278,6 +300,7 @@ func TestGetTransactions_DefaultsInvalidPagination(t *testing.T) {
 		t.Errorf("Limit = %d, want 20 (clamped)", resp.Limit)
 	}
 }
+
 func TestInitializeFunding_Success(t *testing.T) {
 	svc, ws, _ := newTestSvc(100_000, models.KYCTierOne)
 
@@ -299,7 +322,6 @@ func TestInitializeFunding_Success(t *testing.T) {
 		t.Errorf("Expected valid gateway checkout destination URL string, got empty field")
 	}
 
-	// Verify that the transaction log appended exactly one pending placeholder record
 	if len(ws.txs) != 1 {
 		t.Errorf("Expected exactly 1 pending ledger item logged, found %d", len(ws.txs))
 	}
