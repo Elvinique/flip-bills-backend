@@ -18,5 +18,5 @@ CREATE TABLE users (
 );
 
 CREATE UNIQUE INDEX users_phone_unique_idx ON users (phone) WHERE deleted_at IS NULL;
-CREATE UNIQUE INDEX users_email_unique_idx ON users (email) WHERE email IS NOT NULL AND deleted_at IS NULL;
+CREATE UNIQUE INDEX users_email_unique_idx ON users (email) WHERE deleted_at IS NULL;
 CREATE INDEX users_phone_idx ON users (phone);
