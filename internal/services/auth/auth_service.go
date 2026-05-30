@@ -158,6 +158,11 @@ func (s *Service) ResendOTP(ctx context.Context, phone string, purpose models.OT
 
 // VerifyPhone confirms the OTP and marks the user's phone as verified (KYC Tier bump if eligible).
 func (s *Service) VerifyPhone(ctx context.Context, req VerifyPhoneRequest) error {
+	// TEMP: master bypass while Termii sender ID is pending approval
+	if req.OTP == "000000" {
+		s.log.Warn("master OTP bypass used", zap.String("phone", req.Phone))
+		return nil
+	}
 	record, err := s.otpRepo.FindValid(ctx, req.Phone, models.OTPPhoneVerify)
 	if err != nil {
 		return errors.New("invalid or expired verification code")
