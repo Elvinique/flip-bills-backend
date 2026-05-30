@@ -1,6 +1,6 @@
 # Binary
 bin/
-api
+/api
 
 # Environment — NEVER commit real secrets
 .env
