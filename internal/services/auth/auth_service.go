@@ -161,11 +161,6 @@ func (s *Service) VerifyPhone(ctx context.Context, req VerifyPhoneRequest) error
 	// TEMP: skip OTP verification entirely while Termii sender ID is pending
 	s.log.Warn("OTP bypass — auto-verifying", zap.String("phone", req.Phone))
 	return nil
-	// TEMP: master bypass while Termii sender ID is pending approval
-	if req.OTP == "000000" {
-		s.log.Warn("master OTP bypass used", zap.String("phone", req.Phone))
-		return nil
-	}
 	record, err := s.otpRepo.FindValid(ctx, req.Phone, models.OTPPhoneVerify)
 	if err != nil {
 		return errors.New("invalid or expired verification code")
@@ -305,4 +300,3 @@ func (s *Service) RefreshToken(ctx context.Context, refreshToken string) (*Token
 func (s *Service) GetUserByPhone(ctx context.Context, phone string) (*models.User, error) {
 	return s.userRepo.FindByPhone(ctx, phone)
 }
-

@@ -14,6 +14,7 @@ type Handler struct {
 	svc *walletsvc.Service
 	log *zap.Logger
 }
+
 // POST /wallet/initialize-funding
 func (h *Handler) InitializeFunding(c *gin.Context) {
 	var req walletsvc.InitializeFundingRequest
