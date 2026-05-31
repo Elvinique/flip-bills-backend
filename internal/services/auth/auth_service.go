@@ -300,3 +300,9 @@ func (s *Service) RefreshToken(ctx context.Context, refreshToken string) (*Token
 	}
 	return s.generateTokenPair(user.ID.String(), int(user.KYCTier))
 }
+
+// GetUserByPhone looks up a user by phone — used by set-pin public endpoint.
+func (s *Service) GetUserByPhone(ctx context.Context, phone string) (*models.User, error) {
+	return s.userRepo.FindByPhone(ctx, phone)
+}
+

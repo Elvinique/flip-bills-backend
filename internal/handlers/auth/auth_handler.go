@@ -79,12 +79,27 @@ func (h *Handler) ResendOTP(c *gin.Context) {
 
 // POST /auth/set-pin  [protected]
 func (h *Handler) SetPIN(c *gin.Context) {
-	var req authsvc.SetPINRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
+	var body struct {
+		Phone      string `json:"phone"`
+		PIN        string `json:"pin"        binding:"required,len=6"`
+		ConfirmPIN string `json:"confirm_pin" binding:"required,len=6"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
 		response.BadRequest(c, "validation failed", err.Error())
 		return
 	}
-	if err := h.svc.SetPIN(c.Request.Context(), middleware.GetUserID(c), req); err != nil {
+	// Try JWT first, fall back to phone lookup
+	userID := middleware.GetUserID(c)
+	if userID == "" && body.Phone != "" {
+		u, err := h.svc.GetUserByPhone(c.Request.Context(), body.Phone)
+		if err != nil {
+			response.UnprocessableEntity(c, "user not found", nil)
+			return
+		}
+		userID = u.ID.String()
+	}
+	req := authsvc.SetPINRequest{PIN: body.PIN, ConfirmPIN: body.ConfirmPIN}
+	if err := h.svc.SetPIN(c.Request.Context(), userID, req); err != nil {
 		response.UnprocessableEntity(c, err.Error(), nil)
 		return
 	}
