@@ -89,7 +89,10 @@ func (h *Handler) SetPIN(c *gin.Context) {
 		return
 	}
 	// Try JWT first, fall back to phone lookup
-	userID := middleware.GetUserID(c)
+	userID := ""
+	if authHeader := c.GetHeader("Authorization"); authHeader != "" {
+		userID = middleware.GetUserID(c)
+	}
 	if userID == "" && body.Phone != "" {
 		u, err := h.svc.GetUserByPhone(c.Request.Context(), body.Phone)
 		if err != nil {
