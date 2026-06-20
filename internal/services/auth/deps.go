@@ -17,6 +17,7 @@ type userRepo interface {
 	Create(ctx context.Context, u *models.User) error
 	FindByID(ctx context.Context, id string) (*models.User, error)
 	FindByPhone(ctx context.Context, phone string) (*models.User, error)
+	FindByEmail(ctx context.Context, email string) (*models.User, error)
 	UpdateKYCTier(ctx context.Context, userID string, tier models.KYCTier) error
 	UpdatePIN(ctx context.Context, userID, pinHash string) error
 	UpdateBVN(ctx context.Context, userID, bvn string) error
@@ -36,6 +37,10 @@ type otpRepo interface {
 
 type smsService interface {
 	SendOTP(ctx context.Context, phone, otp, purpose string) error
+}
+
+type emailService interface {
+	SendOTP(ctx context.Context, email, otp, purpose string) error
 }
 
 type jwtManager interface {

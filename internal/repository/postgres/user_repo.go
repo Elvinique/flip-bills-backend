@@ -47,6 +47,14 @@ func (r *UserRepository) FindByPhone(ctx context.Context, phone string) (*models
 	return scanUser(row)
 }
 
+func (r *UserRepository) FindByEmail(ctx context.Context, email string) (*models.User, error) {
+	row := r.db.QueryRow(ctx,
+		`SELECT id,phone,email,password_hash,first_name,last_name,kyc_tier,
+		        bvn,nin,is_active,pin_hash,created_at,updated_at
+		 FROM users WHERE email=$1 AND deleted_at IS NULL`, email)
+	return scanUser(row)
+}
+
 func (r *UserRepository) UpdateKYCTier(ctx context.Context, userID string, tier models.KYCTier) error {
 	_, err := r.db.Exec(ctx,
 		`UPDATE users SET kyc_tier=$1, updated_at=NOW() WHERE id=$2`, tier, userID)

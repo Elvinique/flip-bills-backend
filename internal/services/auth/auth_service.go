@@ -26,6 +26,7 @@ var _ jwtManager = (*jwtpkg.Manager)(nil)
 
 type RegisterRequest struct {
 	Phone     string `json:"phone"      binding:"required,e164"`
+	Email     string `json:"email"      binding:"required,email"`
 	Password  string `json:"password"   binding:"required,min=8"`
 	FirstName string `json:"first_name" binding:"required"`
 	LastName  string `json:"last_name"  binding:"required"`
@@ -63,6 +64,7 @@ type Service struct {
 	walletRepo walletRepo
 	otpRepo    otpRepo
 	sms        smsService
+	email      emailService
 	jwt        jwtManager
 	log        *zap.Logger
 }
@@ -72,12 +74,13 @@ func NewService(
 	walletRepo *postgres.WalletRepository,
 	otpRepo *postgres.OTPRepository,
 	sms *notifications.SMSService,
+	email *notifications.EmailService,
 	jwt *jwtpkg.Manager,
 	log *zap.Logger,
 ) *Service {
 	return &Service{
 		userRepo: userRepo, walletRepo: walletRepo,
-		otpRepo: otpRepo, sms: sms, jwt: jwt, log: log,
+		otpRepo: otpRepo, sms: sms, email: email, jwt: jwt, log: log,
 	}
 }
 
@@ -86,6 +89,10 @@ func (s *Service) Register(ctx context.Context, req RegisterRequest) (string, er
 	existing, _ := s.userRepo.FindByPhone(ctx, req.Phone)
 	if existing != nil {
 		return "", errors.New("phone number is already registered")
+	}
+	existingEmail, _ := s.userRepo.FindByEmail(ctx, req.Email)
+	if existingEmail != nil {
+		return "", errors.New("email is already registered")
 	}
 
 	hash, err := crypto.HashPassword(req.Password)
@@ -96,6 +103,7 @@ func (s *Service) Register(ctx context.Context, req RegisterRequest) (string, er
 	user := &models.User{
 		ID:           uuid.New(),
 		Phone:        req.Phone,
+		Email:        req.Email,
 		PasswordHash: hash,
 		FirstName:    req.FirstName,
 		LastName:     req.LastName,
@@ -122,7 +130,7 @@ func (s *Service) Register(ctx context.Context, req RegisterRequest) (string, er
 	}
 
 	// Send phone verification OTP.
-	if err := s.sendOTP(ctx, req.Phone, models.OTPPhoneVerify); err != nil {
+	if err := s.sendOTP(ctx, req.Phone, req.Email, models.OTPPhoneVerify); err != nil {
 		// Non-fatal — user can request resend.
 		s.log.Warn("OTP send failed after registration", zap.Error(err))
 	}
@@ -153,7 +161,7 @@ func (s *Service) ResendOTP(ctx context.Context, phone string, purpose models.OT
 		// Deliberately vague — don't leak whether a phone is registered.
 		return nil
 	}
-	return s.sendOTP(ctx, phone, purpose)
+	return s.sendOTP(ctx, phone, user.Email, purpose)
 }
 
 // VerifyPhone confirms the OTP and marks the user's phone as verified (KYC Tier bump if eligible).
@@ -232,7 +240,7 @@ func (s *Service) UpgradeKYC(ctx context.Context, userID string, req KYCUpgradeR
 
 // ── internal helpers ─────────────────────────────────────────────────────────
 
-func (s *Service) sendOTP(ctx context.Context, phone string, purpose models.OTPPurpose) error {
+func (s *Service) sendOTP(ctx context.Context, phone, email string, purpose models.OTPPurpose) error {
 	otp, err := crypto.GenerateOTP(6)
 	if err != nil {
 		return err
@@ -259,6 +267,9 @@ func (s *Service) sendOTP(ctx context.Context, phone string, purpose models.OTPP
 		return err
 	}
 
+	if email != "" {
+		return s.email.SendOTP(ctx, email, otp, string(purpose))
+	}
 	return s.sms.SendOTP(ctx, phone, otp, string(purpose))
 }
 

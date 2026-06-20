@@ -18,6 +18,7 @@ type Config struct {
 	JWT    JWTConfig
 	Pay    PaymentConfig
 	SMS    SMSConfig
+	Brevo  BrevoConfig
 	Recon  ReconciliationConfig
 	Travel TravelConfig
 }
@@ -68,6 +69,12 @@ type PaymentConfig struct {
 type SMSConfig struct {
 	TermiiAPIKey  string
 	TermiiBaseURL string
+}
+
+type BrevoConfig struct {
+	APIKey      string
+	SenderEmail string
+	SenderName  string
 }
 
 type ReconciliationConfig struct {
@@ -145,6 +152,11 @@ func Load() *Config {
 		SMS: SMSConfig{
 			TermiiAPIKey:  getEnv("TERMII_API_KEY", ""),
 			TermiiBaseURL: getEnv("TERMII_BASE_URL", "https://api.ng.termii.com"),
+		},
+		Brevo: BrevoConfig{
+			APIKey:      getEnv("BREVO_API_KEY", ""),
+			SenderEmail: getEnv("BREVO_SENDER_EMAIL", ""),
+			SenderName:  getEnv("BREVO_SENDER_NAME", "Flip Bills"),
 		},
 		Recon: ReconciliationConfig{
 			TimeoutSeconds: getEnvInt("RECONCILIATION_TIMEOUT_SECONDS", 45),

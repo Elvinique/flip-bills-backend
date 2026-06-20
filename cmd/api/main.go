@@ -88,6 +88,7 @@ func main() {
 	// ── Shared services ───────────────────────────────────────────────────────
 	jwtManager := jwtpkg.NewManager(cfg.JWT.Secret, cfg.JWT.AccessTTL, cfg.JWT.RefreshTTL)
 	smsSvc := notifications.NewSMSService(cfg.SMS.TermiiAPIKey, cfg.SMS.TermiiBaseURL, log)
+	emailSvc := notifications.NewEmailService(cfg.Brevo.APIKey, cfg.Brevo.SenderEmail, cfg.Brevo.SenderName, log)
 	reconEngine := reconcile.NewEngine(walletRepo, log, cfg.Recon.TimeoutSeconds)
 	flutterwaveBills := utilitysvc.NewFlutterwaveClient(cfg.Pay.FlutterwaveKey, cfg.Pay.FlutterwaveBaseURL)
 
@@ -110,7 +111,7 @@ func main() {
 
 	// ── Domain services ───────────────────────────────────────────────────────
 	loyaltyService := loyaltysvc.NewService(loyaltyRepo, walletRepo, log)
-	authService := authsvc.NewService(userRepo, walletRepo, otpRepo, smsSvc, jwtManager, log)
+	authService := authsvc.NewService(userRepo, walletRepo, otpRepo, smsSvc, emailSvc, jwtManager, log)
 	walletService := walletsvc.NewService(walletRepo, userRepo, loyaltyService, log)
 	utilityService := utilitysvc.NewService(walletRepo, userRepo, reconEngine, loyaltyService, smsSvc, flutterwaveBills, monnifyFallback, log)
 	travelService := travelsvc.NewService(

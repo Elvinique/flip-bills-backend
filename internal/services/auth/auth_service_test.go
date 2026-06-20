@@ -20,10 +20,11 @@ type fakeUserRepo struct {
 	mu      sync.RWMutex
 	byPhone map[string]*models.User
 	byID    map[string]*models.User
+	byEmail map[string]*models.User
 }
 
 func newFakeUserRepo() *fakeUserRepo {
-	return &fakeUserRepo{byPhone: map[string]*models.User{}, byID: map[string]*models.User{}}
+	return &fakeUserRepo{byPhone: map[string]*models.User{}, byID: map[string]*models.User{}, byEmail: map[string]*models.User{}}
 }
 
 func (r *fakeUserRepo) Create(_ context.Context, u *models.User) error {
@@ -31,12 +32,25 @@ func (r *fakeUserRepo) Create(_ context.Context, u *models.User) error {
 	defer r.mu.Unlock()
 	r.byPhone[u.Phone] = u
 	r.byID[u.ID.String()] = u
+	if u.Email != "" {
+		r.byEmail[u.Email] = u
+	}
 	return nil
 }
 func (r *fakeUserRepo) FindByPhone(_ context.Context, phone string) (*models.User, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	u, ok := r.byPhone[phone]
+	if !ok {
+		return nil, errors.New("not found")
+	}
+	return u, nil
+}
+
+func (r *fakeUserRepo) FindByEmail(_ context.Context, email string) (*models.User, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	u, ok := r.byEmail[email]
 	if !ok {
 		return nil, errors.New("not found")
 	}
@@ -147,6 +161,18 @@ func (s *fakeSMS) SendOTP(_ context.Context, phone, _, _ string) error {
 
 // ── Test helper ───────────────────────────────────────────────────────────────
 
+type fakeEmail struct {
+	mu   sync.Mutex
+	Sent []string
+}
+
+func (f *fakeEmail) SendOTP(_ context.Context, email, otp, purpose string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.Sent = append(f.Sent, email)
+	return nil
+}
+
 func newTestService(t *testing.T) (*Service, *fakeUserRepo, *fakeOTPRepo, *fakeSMS) {
 	t.Helper()
 	users := newFakeUserRepo()
@@ -157,6 +183,7 @@ func newTestService(t *testing.T) (*Service, *fakeUserRepo, *fakeOTPRepo, *fakeS
 		walletRepo: &fakeWalletRepo{},
 		otpRepo:    otp,
 		sms:        sms,
+		email:      &fakeEmail{},
 		jwt:        jwtpkg.NewManager("test-secret-min-32-chars-long!!!!!", 15*time.Minute, 720*time.Hour),
 		log:        zap.NewNop(),
 	}
