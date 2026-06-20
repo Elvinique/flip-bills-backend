@@ -71,6 +71,10 @@ func (f *fakeWalletStore) InsertTransaction(_ context.Context, tx *models.Transa
 	return nil
 }
 
+func (f *fakeWalletStore) UpdateTransactionBalances(_ context.Context, _ string, _, _ int64) error {
+	return nil
+}
+
 func (f *fakeWalletStore) UpdateTransactionStatus(_ context.Context, _ string, _ models.TransactionStatus, _ string) error {
 	return nil
 }

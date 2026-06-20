@@ -413,7 +413,7 @@ func (r *WalletRepository) CreditWithTransaction(ctx context.Context, walletID u
 func (r *WalletRepository) FindCreditByExternalRef(ctx context.Context, externalRef string) (*models.Transaction, error) {
 	row := r.db.QueryRow(ctx,
 		`SELECT id, user_id, wallet_id, reference, external_ref, type, category,
-		        amount, fee, balance_before, balance_after, status, provider,
+		        amount, commission_kobo, fee, balance_before, balance_after, status, provider,
 		        narration, meta, reversed_tx_id, created_at, updated_at
 		 FROM transactions
 		 WHERE external_ref = $1 AND type = 'credit'
@@ -423,7 +423,7 @@ func (r *WalletRepository) FindCreditByExternalRef(ctx context.Context, external
 	tx := &models.Transaction{}
 	err := row.Scan(
 		&tx.ID, &tx.UserID, &tx.WalletID, &tx.Reference, &tx.ExternalRef,
-		&tx.Type, &tx.Category, &tx.Amount, &tx.Fee,
+		&tx.Type, &tx.Category, &tx.Amount, &tx.CommissionKobo, &tx.Fee,
 		&tx.BalanceBefore, &tx.BalanceAfter, &tx.Status, &tx.Provider,
 		&tx.Narration, &tx.Meta, &tx.ReversedTxID, &tx.CreatedAt, &tx.UpdatedAt,
 	)
@@ -431,4 +431,12 @@ func (r *WalletRepository) FindCreditByExternalRef(ctx context.Context, external
 		return nil, err
 	}
 	return tx, nil
+}
+
+func (r *WalletRepository) UpdateTransactionBalances(ctx context.Context, ref string, balanceBefore, balanceAfter int64) error {
+	_, err := r.getRunner(ctx).Exec(ctx,
+		`UPDATE transactions SET balance_before=$1, balance_after=$2, updated_at=NOW() WHERE reference=$3`,
+		balanceBefore, balanceAfter, ref,
+	)
+	return err
 }

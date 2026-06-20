@@ -19,6 +19,7 @@ type walletStore interface {
 	UpdateDailyLimit(ctx context.Context, userID string, newLimit int64) error
 	InsertTransaction(ctx context.Context, tx *models.Transaction) error
 	UpdateTransactionStatus(ctx context.Context, ref string, status models.TransactionStatus, extRef string) error
+	UpdateTransactionBalances(ctx context.Context, ref string, balanceBefore, balanceAfter int64) error
 	UpdateTransactionMeta(ctx context.Context, ref string, meta []byte) error
 	ReverseDebitIfNeeded(ctx context.Context, original *models.Transaction, reversal *models.Transaction) (bool, error)
 	CategorySpendStats(ctx context.Context, userID string, category models.ServiceCategory, since time.Time) (*postgres.CategorySpendStats, error)

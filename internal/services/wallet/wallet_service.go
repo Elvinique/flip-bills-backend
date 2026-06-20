@@ -125,6 +125,11 @@ func (s *Service) GetTransactions(ctx context.Context, userID string, page, limi
 
 // FundWallet credits the wallet after a successful inbound payment webhook.
 func (s *Service) FundWallet(ctx context.Context, userID string, req FundWalletRequest) (*models.Transaction, error) {
+	existing, existErr := s.walletRepo.FindCreditByExternalRef(ctx, req.PaymentRef)
+	if existErr == nil && existing != nil {
+		return existing, nil
+	}
+
 	var tx *models.Transaction
 
 	err := s.walletRepo.WithinTx(ctx, func(txCtx context.Context) error {
@@ -269,6 +274,9 @@ func (s *Service) ProcessFundingWebhook(ctx context.Context, reference string, e
 			return fmt.Errorf("failed to credit wallet balance: %w", err)
 		}
 
+		if err := s.walletRepo.UpdateTransactionBalances(txCtx, reference, tx.BalanceBefore, tx.BalanceAfter); err != nil {
+			return fmt.Errorf("failed to update transaction balances: %w", err)
+		}
 		if err := s.walletRepo.UpdateTransactionStatus(txCtx, reference, models.TxSuccess, externalRef); err != nil {
 			return fmt.Errorf("failed to update transaction status to success: %w", err)
 		}
