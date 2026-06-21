@@ -181,6 +181,29 @@ func (s *Service) VerifyPhone(ctx context.Context, req VerifyPhoneRequest) error
 	return nil
 }
 
+// GetProfile returns the authenticated user's profile.
+func (s *Service) GetProfile(ctx context.Context, userID string) (*models.User, error) {
+	return s.userRepo.FindByID(ctx, userID)
+}
+
+type UpdateProfileRequest struct {
+	FirstName string `json:"first_name" binding:"required"`
+	LastName  string `json:"last_name"  binding:"required"`
+	Email     string `json:"email"      binding:"required,email"`
+}
+
+// UpdateProfile updates the user's first name, last name, and email.
+func (s *Service) UpdateProfile(ctx context.Context, userID string, req UpdateProfileRequest) (*models.User, error) {
+	existing, err := s.userRepo.FindByEmail(ctx, req.Email)
+	if err == nil && existing != nil && existing.ID.String() != userID {
+		return nil, errors.New("email is already registered to another account")
+	}
+	if err := s.userRepo.UpdateProfile(ctx, userID, req.FirstName, req.LastName, req.Email); err != nil {
+		return nil, err
+	}
+	return s.userRepo.FindByID(ctx, userID)
+}
+
 // SetPIN hashes and stores the user's 6-digit transaction PIN.
 func (s *Service) SetPIN(ctx context.Context, userID string, req SetPINRequest) error {
 	if req.PIN != req.ConfirmPIN {

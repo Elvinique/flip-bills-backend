@@ -18,6 +18,7 @@ type userRepo interface {
 	FindByID(ctx context.Context, id string) (*models.User, error)
 	FindByPhone(ctx context.Context, phone string) (*models.User, error)
 	FindByEmail(ctx context.Context, email string) (*models.User, error)
+	UpdateProfile(ctx context.Context, userID, firstName, lastName, email string) error
 	UpdateKYCTier(ctx context.Context, userID string, tier models.KYCTier) error
 	UpdatePIN(ctx context.Context, userID, pinHash string) error
 	UpdateBVN(ctx context.Context, userID, bvn string) error

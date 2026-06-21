@@ -56,6 +56,19 @@ func (r *fakeUserRepo) FindByEmail(_ context.Context, email string) (*models.Use
 	}
 	return u, nil
 }
+
+func (r *fakeUserRepo) UpdateProfile(_ context.Context, userID, firstName, lastName, email string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	u, ok := r.byID[userID]
+	if !ok {
+		return errors.New("not found")
+	}
+	u.FirstName = firstName
+	u.LastName = lastName
+	u.Email = email
+	return nil
+}
 func (r *fakeUserRepo) FindByID(_ context.Context, id string) (*models.User, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()

@@ -55,6 +55,14 @@ func (r *UserRepository) FindByEmail(ctx context.Context, email string) (*models
 	return scanUser(row)
 }
 
+func (r *UserRepository) UpdateProfile(ctx context.Context, userID, firstName, lastName, email string) error {
+	_, err := r.db.Exec(ctx,
+		`UPDATE users SET first_name=$1, last_name=$2, email=$3, updated_at=NOW() WHERE id=$4`,
+		firstName, lastName, email, userID,
+	)
+	return err
+}
+
 func (r *UserRepository) UpdateKYCTier(ctx context.Context, userID string, tier models.KYCTier) error {
 	_, err := r.db.Exec(ctx,
 		`UPDATE users SET kyc_tier=$1, updated_at=NOW() WHERE id=$2`, tier, userID)

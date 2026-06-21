@@ -205,6 +205,11 @@ func main() {
 	p.Use(middleware.Auth(jwtManager))
 	{
 		p.POST("/auth/kyc/upgrade", authH.UpgradeKYC)
+		user := p.Group("/user")
+		{
+			user.GET("/profile", authH.GetProfile)
+			user.PATCH("/profile", authH.UpdateProfile)
+		}
 
 		wallet := p.Group("/wallet")
 		{

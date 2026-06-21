@@ -144,3 +144,38 @@ func (h *Handler) RefreshToken(c *gin.Context) {
 	}
 	response.OK(c, "token refreshed", tokens)
 }
+
+// GET /user/profile
+func (h *Handler) GetProfile(c *gin.Context) {
+	userID := middleware.GetUserID(c)
+	if userID == "" {
+		response.Unauthorized(c, "authentication required")
+		return
+	}
+	user, err := h.svc.GetProfile(c.Request.Context(), userID)
+	if err != nil {
+		response.NotFound(c, "profile not found")
+		return
+	}
+	response.OK(c, "profile retrieved", user)
+}
+
+// PATCH /user/profile
+func (h *Handler) UpdateProfile(c *gin.Context) {
+	userID := middleware.GetUserID(c)
+	if userID == "" {
+		response.Unauthorized(c, "authentication required")
+		return
+	}
+	var req authsvc.UpdateProfileRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "validation failed", err.Error())
+		return
+	}
+	user, err := h.svc.UpdateProfile(c.Request.Context(), userID, req)
+	if err != nil {
+		response.UnprocessableEntity(c, err.Error(), nil)
+		return
+	}
+	response.OK(c, "profile updated successfully", user)
+}
