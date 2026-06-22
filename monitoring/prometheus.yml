@@ -1,0 +1,50 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    env: production
+    app: flip-bills
+
+# ── Alerting ──────────────────────────────────────────────────────────────────
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: []   # Add alertmanager host:9093 when configured
+
+# ── Rule files ────────────────────────────────────────────────────────────────
+rule_files:
+  - "rules/*.yml"
+
+# ── Scrape targets ────────────────────────────────────────────────────────────
+scrape_configs:
+  # Flip Bills API — exposes /metrics via prometheus/client_golang
+  - job_name: flip-bills-api
+    static_configs:
+      - targets: ["api:8080"]
+    metrics_path: /metrics
+    scheme: http
+
+  # PostgreSQL — via postgres_exporter
+  - job_name: postgres
+    static_configs:
+      - targets: ["postgres-exporter:9187"]
+
+  # Redis — via redis_exporter
+  - job_name: redis
+    static_configs:
+      - targets: ["redis-exporter:9121"]
+
+  # RabbitMQ — native Prometheus plugin
+  - job_name: rabbitmq
+    static_configs:
+      - targets: ["rabbitmq:15692"]
+
+  # Node metrics (API host)
+  - job_name: node
+    static_configs:
+      - targets: ["node-exporter:9100"]
+
+  # Prometheus self-monitoring
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]

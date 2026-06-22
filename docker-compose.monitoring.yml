@@ -1,0 +1,123 @@
+version: "3.9"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Flip Bills — Monitoring Stack
+# Usage:  docker compose -f docker-compose.yml -f docker-compose.monitoring.yml up -d
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+
+  # ── Prometheus ───────────────────────────────────────────────────────────────
+  prometheus:
+    image: prom/prometheus:v2.52.0
+    container_name: fb_prometheus
+    restart: unless-stopped
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/rules:/etc/prometheus/rules:ro
+      - prometheus_data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.retention.time=30d"
+      - "--web.enable-lifecycle"
+      - "--web.enable-remote-write-receiver"
+    ports:
+      - "9090:9090"
+    networks:
+      - monitoring
+
+  # ── Grafana ───────────────────────────────────────────────────────────────
+  grafana:
+    image: grafana/grafana:10.4.3
+    container_name: fb_grafana
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-flipbills_grafana_secret}
+      GF_PATHS_PROVISIONING: /etc/grafana/provisioning
+      GF_SERVER_ROOT_URL: http://localhost:3000
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
+    networks:
+      - monitoring
+
+  # ── PostgreSQL Exporter ───────────────────────────────────────────────────
+  postgres-exporter:
+    image: prometheuscommunity/postgres-exporter:v0.15.0
+    container_name: fb_postgres_exporter
+    restart: unless-stopped
+    environment:
+      DATA_SOURCE_NAME: "postgresql://flipbills:supersecret@postgres:5432/flipbills_db?sslmode=disable"
+    depends_on:
+      - prometheus
+    networks:
+      - monitoring
+      - default
+
+  # ── Redis Exporter ───────────────────────────────────────────────────────
+  redis-exporter:
+    image: oliver006/redis_exporter:v1.62.0
+    container_name: fb_redis_exporter
+    restart: unless-stopped
+    environment:
+      REDIS_ADDR: "redis://redis:6379"
+    depends_on:
+      - prometheus
+    networks:
+      - monitoring
+      - default
+
+  # ── Node Exporter ────────────────────────────────────────────────────────
+  node-exporter:
+    image: prom/node-exporter:v1.8.1
+    container_name: fb_node_exporter
+    restart: unless-stopped
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    command:
+      - "--path.procfs=/host/proc"
+      - "--path.rootfs=/rootfs"
+      - "--path.sysfs=/host/sys"
+      - "--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)"
+    networks:
+      - monitoring
+
+  # ── RabbitMQ (with Prometheus plugin) ────────────────────────────────────
+  rabbitmq:
+    image: rabbitmq:3.13-management
+    container_name: fb_rabbitmq
+    restart: unless-stopped
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-flipbills}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASS:-flipbills_rabbit_secret}
+    command: >
+      sh -c "rabbitmq-plugins enable rabbitmq_prometheus && rabbitmq-server"
+    ports:
+      - "5672:5672"
+      - "15672:15672"   # Management UI
+      - "15692:15692"   # Prometheus metrics
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    networks:
+      - monitoring
+      - default
+
+volumes:
+  prometheus_data:
+  grafana_data:
+  rabbitmq_data:
+
+networks:
+  monitoring:
+    driver: bridge
+  default:
+    external: true
+    name: flip-bills-backend_default

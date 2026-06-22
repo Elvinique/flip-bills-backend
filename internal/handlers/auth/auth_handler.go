@@ -48,6 +48,21 @@ func (h *Handler) Login(c *gin.Context) {
 	response.OK(c, "login successful", tokens)
 }
 
+// POST /auth/google
+func (h *Handler) GoogleLogin(c *gin.Context) {
+	var req authsvc.GoogleLoginRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "validation failed", err.Error())
+		return
+	}
+	tokens, err := h.svc.GoogleLogin(c.Request.Context(), req.IDToken)
+	if err != nil {
+		response.Unauthorized(c, err.Error())
+		return
+	}
+	response.OK(c, "google login successful", tokens)
+}
+
 // POST /auth/verify-phone
 func (h *Handler) VerifyPhone(c *gin.Context) {
 	var req authsvc.VerifyPhoneRequest

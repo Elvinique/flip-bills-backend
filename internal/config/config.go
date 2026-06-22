@@ -64,6 +64,8 @@ type PaymentConfig struct {
 	MonnifyBaseURL           string
 	InterswitchClientID      string
 	InterswitchSecret        string
+	PaystackSecret           string
+	RabbitMQURL              string
 }
 
 type SMSConfig struct {
@@ -148,6 +150,8 @@ func Load() *Config {
 			MonnifyBaseURL:           getEnv("MONNIFY_BASE_URL", "https://sandbox.monnify.com"),
 			InterswitchClientID:      getEnv("INTERSWITCH_CLIENT_ID", ""),
 			InterswitchSecret:        getEnv("INTERSWITCH_SECRET", ""),
+			PaystackSecret:           getEnv("PAYSTACK_SECRET_KEY", ""),
+			RabbitMQURL:              getEnv("RABBITMQ_URL", "amqp://flipbills:rabbitsecret@localhost:5672/flipbills"),
 		},
 		SMS: SMSConfig{
 			TermiiAPIKey:  getEnv("TERMII_API_KEY", ""),

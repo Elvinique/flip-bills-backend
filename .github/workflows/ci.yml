@@ -1,154 +1,275 @@
-name: CI
+name: Flip Bills CI/CD
 
 on:
   push:
-    branches: [main, develop]
+    branches: ["main", "develop"]
   pull_request:
-    branches: [main, develop]
+    branches: ["main", "develop"]
+  release:
+    types: [published]
+
+env:
+  GO_VERSION: "1.23"
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
 
 jobs:
-  test:
-    name: Build & Test
+  # ──────────────────────────────────────────────────────────────────────────
+  # 1. Lint & Static Analysis
+  # ──────────────────────────────────────────────────────────────────────────
+  lint:
+    name: Lint
     runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
 
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: v1.59
+          args: --timeout=5m
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # 2. Unit & Integration Tests (with coverage)
+  # ──────────────────────────────────────────────────────────────────────────
+  test:
+    name: Test
+    runs-on: ubuntu-latest
     services:
       postgres:
         image: postgres:16-alpine
         env:
-          POSTGRES_USER: flipbills
-          POSTGRES_PASSWORD: supersecret
-          POSTGRES_DB: flipbills_db
-        ports:
-          - 5432:5432
+          POSTGRES_USER: flipbills_test
+          POSTGRES_PASSWORD: testpass
+          POSTGRES_DB: flipbills_test
         options: >-
           --health-cmd pg_isready
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
+        ports:
+          - 5432:5432
 
       redis:
         image: redis:7-alpine
-        ports:
-          - 6379:6379
         options: >-
           --health-cmd "redis-cli ping"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
-
-      mongo:
-        image: mongo:7
         ports:
-          - 27017:27017
-
-    env:
-      APP_ENV: test
-      JWT_SECRET: ci-test-jwt-secret-32-bytes-long
-      OFFLINE_QR_SECRET: ci-test-qr-secret-32-bytes-longg
-      POSTGRES_HOST: localhost
-      POSTGRES_PORT: 5432
-      POSTGRES_USER: flipbills
-      POSTGRES_PASSWORD: supersecret
-      POSTGRES_DB: flipbills_db
-      POSTGRES_SSL_MODE: disable
-      MONGO_URI: mongodb://localhost:27017
-      MONGO_DB: flipbills_test
-      REDIS_ADDR: localhost:6379
-      TERMII_API_KEY: ""
-      FLUTTERWAVE_SECRET_KEY: ""
-      FLUTTERWAVE_BASE_URL: https://api.flutterwave.com/v3
-      FLUTTERWAVE_WEBHOOK_SECRET: ""
-      MONNIFY_API_KEY: ""
-      MONNIFY_SECRET_KEY: ""
-      MONNIFY_BASE_URL: https://sandbox.monnify.com
-      GIGM_API_KEY: ""
-      GIGM_BASE_URL: https://api.gigm.com/api
-      GIGM_DISPATCHER_KEY: ""
-      ABC_API_KEY: ""
-      ABC_BASE_URL: https://api.abctransport.com.ng
-      ABC_DISPATCHER_KEY: ""
-      AMADEUS_CLIENT_ID: ""
-      AMADEUS_CLIENT_SECRET: ""
-      AMADEUS_BASE_URL: https://test.api.amadeus.com
+          - 6379:6379
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4.2.2
+      - uses: actions/checkout@v4
 
       - name: Set up Go
-        uses: actions/setup-go@v5.4.0
+        uses: actions/setup-go@v5
         with:
-          go-version: '1.23'
+          go-version: ${{ env.GO_VERSION }}
           cache: true
 
-      - name: Download dependencies
-        run: go mod download
-
-      - name: Verify dependencies
-        run: go mod verify
-
-      - name: Build
-        run: go build ./...
-
-      - name: Install migrate CLI
+      - name: Install migrate
         run: |
           curl -L https://github.com/golang-migrate/migrate/releases/download/v4.17.1/migrate.linux-amd64.tar.gz | tar xvz
-          sudo mv migrate /usr/local/bin/migrate
+          sudo mv migrate /usr/local/bin/
 
-      - name: Run migrations
-        run: |
-          migrate -path ./migrations \
-            -database "postgres://flipbills:supersecret@localhost:5432/flipbills_db?sslmode=disable" up
+      - name: Run DB migrations
+        env:
+          DATABASE_URL: postgres://flipbills_test:testpass@localhost:5432/flipbills_test?sslmode=disable
+        run: migrate -path ./migrations -database "$DATABASE_URL" up
 
       - name: Run tests
-        run: go test -race -cover -coverprofile=coverage.out ./...
+        env:
+          DATABASE_URL: postgres://flipbills_test:testpass@localhost:5432/flipbills_test?sslmode=disable
+          REDIS_URL: redis://localhost:6379
+          JWT_SECRET: test_secret_key_not_for_production
+          ENVIRONMENT: test
+        run: go test -v -race -coverprofile=coverage.txt -covermode=atomic ./...
 
-      - name: Print coverage summary
-        run: go tool cover -func=coverage.out | tail -1
-
-      - name: Upload coverage report
-        uses: actions/upload-artifact@v4.6.2
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
         with:
-          name: coverage-report
-          path: coverage.out
-          retention-days: 7
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: ./coverage.txt
+          flags: backend
+          name: flip-bills-backend
 
-  lint:
-    name: Lint
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4.2.2
-
-      - name: Set up Go
-        uses: actions/setup-go@v5.4.0
-        with:
-          go-version: '1.23'
-          cache: true
-
-      - name: Run golangci-lint
-        uses: golangci/golangci-lint-action@v6.5.2
-        with:
-          version: v1.64.8
-          args: --timeout=5m
-
+  # ──────────────────────────────────────────────────────────────────────────
+  # 3. Security Scanning
+  # ──────────────────────────────────────────────────────────────────────────
   security:
     name: Security Scan
     runs-on: ubuntu-latest
-    # Non-blocking — reports vulnerabilities but never fails the pipeline
-    continue-on-error: true
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4.2.2
+      - uses: actions/checkout@v4
 
       - name: Set up Go
-        uses: actions/setup-go@v5.4.0
+        uses: actions/setup-go@v5
         with:
-          go-version: '1.23'
+          go-version: ${{ env.GO_VERSION }}
           cache: true
 
-      - name: Install govulncheck
-        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+      # Checks for known vulnerabilities in Go dependencies
+      - name: govulncheck
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          govulncheck ./...
 
-      - name: Run vulnerability check
-        run: govulncheck ./... || true
+      # SAST scanner for Go — detects common security bugs
+      - name: gosec
+        uses: securego/gosec@master
+        with:
+          args: "-severity medium -confidence medium -quiet ./..."
+
+      # Container image scanning (only on main push / release)
+      - name: Trivy — scan repo filesystem
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: "fs"
+          scan-ref: "."
+          severity: "CRITICAL,HIGH"
+          exit-code: "1"
+          ignore-unfixed: true
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # 4. Build & Push Docker Image
+  # ──────────────────────────────────────────────────────────────────────────
+  docker:
+    name: Docker Build & Push
+    runs-on: ubuntu-latest
+    needs: [lint, test, security]
+    if: github.event_name == 'push' || github.event_name == 'release'
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=sha,prefix=sha-,format=short
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            BUILD_VERSION=${{ github.sha }}
+
+      # Scan the built image for vulnerabilities
+      - name: Trivy — scan Docker image
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:sha-${{ github.sha }}
+          severity: "CRITICAL"
+          exit-code: "1"
+          ignore-unfixed: true
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # 5. Deploy to Staging (on main push)
+  # ──────────────────────────────────────────────────────────────────────────
+  deploy-staging:
+    name: Deploy — Staging
+    runs-on: ubuntu-latest
+    needs: [docker]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    environment:
+      name: staging
+      url: https://staging-api.flipbills.app
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@v4
+
+      - name: Configure kubeconfig
+        run: |
+          echo "${{ secrets.KUBE_CONFIG_STAGING }}" | base64 -d > $HOME/.kube/config
+
+      - name: Update image in Kubernetes
+        run: |
+          IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:sha-${{ github.sha }}"
+          kubectl set image deployment/flipbills-api api=$IMAGE -n flip-bills-staging
+          kubectl rollout status deployment/flipbills-api -n flip-bills-staging --timeout=300s
+
+      - name: Smoke test
+        run: |
+          sleep 10
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" https://staging-api.flipbills.app/health)
+          if [ "$STATUS" != "200" ]; then
+            echo "Smoke test failed — HTTP $STATUS"
+            exit 1
+          fi
+          echo "Smoke test passed ✅"
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # 6. Deploy to Production (on release publish)
+  # ──────────────────────────────────────────────────────────────────────────
+  deploy-production:
+    name: Deploy — Production
+    runs-on: ubuntu-latest
+    needs: [docker, deploy-staging]
+    if: github.event_name == 'release'
+    environment:
+      name: production
+      url: https://api.flipbills.app
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@v4
+
+      - name: Configure kubeconfig
+        run: |
+          echo "${{ secrets.KUBE_CONFIG_PROD }}" | base64 -d > $HOME/.kube/config
+
+      - name: Run DB migrations (production)
+        run: |
+          kubectl exec -n flip-bills deploy/flipbills-api -- \
+            migrate -path /app/migrations -database "${{ secrets.PROD_DATABASE_URL }}" up
+
+      - name: Rolling update — production
+        run: |
+          IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.ref_name }}"
+          kubectl set image deployment/flipbills-api api=$IMAGE -n flip-bills
+          kubectl rollout status deployment/flipbills-api -n flip-bills --timeout=600s
+
+      - name: Tag GitHub release with image digest
+        run: |
+          IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.ref_name }}"
+          DIGEST=$(docker inspect --format='{{index .RepoDigests 0}}' $IMAGE 2>/dev/null || echo "see GHCR")
+          echo "Deployed image: $DIGEST"

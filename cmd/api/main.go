@@ -29,6 +29,17 @@ import (
 	"github.com/flip-bills/backend/internal/services/travel/operators"
 	utilitysvc "github.com/flip-bills/backend/internal/services/utilities"
 	walletsvc "github.com/flip-bills/backend/internal/services/wallet"
+	
+	"github.com/flip-bills/backend/internal/ledger"
+	"github.com/flip-bills/backend/internal/providers"
+	"github.com/flip-bills/backend/internal/providers/opay"
+	"github.com/flip-bills/backend/internal/providers/paystack"
+	"github.com/flip-bills/backend/internal/queue"
+	transferhandler "github.com/flip-bills/backend/internal/handlers/transfer"
+	transfersvc "github.com/flip-bills/backend/internal/services/transfer"
+	vahandler "github.com/flip-bills/backend/internal/handlers/virtualaccount"
+	vasvc "github.com/flip-bills/backend/internal/services/virtualaccount"
+
 	jwtpkg "github.com/flip-bills/backend/pkg/jwt"
 	"github.com/flip-bills/backend/pkg/logger"
 	"github.com/gin-gonic/gin"
@@ -128,6 +139,28 @@ func main() {
 		smsSvc, operatorKeys, log,
 	)
 
+	// ── Phase 2 Infrastructure ────────────────────────────────────────────────
+	ledgerSvc := ledger.NewService(pgPool)
+
+	eventQueue, err := queue.NewProducer(cfg.Pay.RabbitMQURL)
+	if err != nil {
+		log.Warn("RabbitMQ connection failed, async events disabled", zap.Error(err))
+	} else {
+		defer eventQueue.Close()
+	}
+
+	paystackClient := paystack.New(cfg.Pay.PaystackSecret, "")
+	opayClient := opay.New("", "", "", "")
+	
+	provRouter := providers.NewProviderRouter(
+		[]providers.PaymentProvider{paystackClient, opayClient},
+		3, 60*time.Second, log,
+	)
+	_ = provRouter // To be fully wired into utilitysvc in future phases
+
+	transferService := transfersvc.NewService(pgPool, ledgerSvc, paystackClient) // or provRouter if configured
+	vaService := vasvc.NewService(pgPool, paystackClient)
+
 	// ── Handlers ──────────────────────────────────────────────────────────────
 	authH := authhandler.NewHandler(authService, log)
 	walletH := wallethandler.NewHandler(walletService, log)
@@ -141,6 +174,8 @@ func main() {
 		cfg.Pay.MonnifySecret,
 		log,
 	)
+	transferH := transferhandler.NewHandler(transferService)
+	vaH := vahandler.NewHandler(vaService)
 
 	// ── Router ────────────────────────────────────────────────────────────────
 	if cfg.AppEnv == "production" {
@@ -187,6 +222,7 @@ func main() {
 	{
 		auth.POST("/register", authH.Register)
 		auth.POST("/login", authH.Login)
+		auth.POST("/google", authH.GoogleLogin)
 		auth.POST("/verify-phone", authH.VerifyPhone)
 		auth.POST("/resend-otp", authH.ResendOTP)
 		auth.POST("/refresh", authH.RefreshToken)
@@ -217,6 +253,12 @@ func main() {
 			wallet.GET("/transactions", walletH.GetTransactions)
 			wallet.POST("/fund", walletH.FundWallet)
 			wallet.POST("/initialize-funding", walletH.InitializeFunding)
+			vaH.RegisterRoutes(p) // mounts inside /wallet automatically per handler
+		}
+
+		transfer := p.Group("")
+		{
+			transferH.RegisterRoutes(transfer)
 		}
 
 		vas := p.Group("/vas")

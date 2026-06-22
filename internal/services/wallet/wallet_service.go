@@ -226,6 +226,9 @@ func (s *Service) InitializeFunding(ctx context.Context, userID string, req Init
 		checkoutURL = fmt.Sprintf("https://checkout.flutterwave.com/v3/hosted/pay/%s", ref)
 	case "monnify":
 		checkoutURL = fmt.Sprintf("https://sandbox.monnify.com/v1/checkout/pay/%s", ref)
+	case "opay":
+		// Mock OPay Checkout URL
+		checkoutURL = fmt.Sprintf("https://www.opayweb.com/payment/%s", ref)
 	default:
 		checkoutURL = fmt.Sprintf("https://checkout.flipbills.com/fallback/%s", ref)
 	}

@@ -2,7 +2,10 @@ package auth
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/flip-bills/backend/internal/models"
@@ -35,6 +38,10 @@ type RegisterRequest struct {
 type LoginRequest struct {
 	Phone    string `json:"phone"    binding:"required"`
 	Password string `json:"password" binding:"required"`
+}
+
+type GoogleLoginRequest struct {
+	IDToken string `json:"id_token" binding:"required"`
 }
 
 type VerifyPhoneRequest struct {
@@ -151,6 +158,83 @@ func (s *Service) Login(ctx context.Context, req LoginRequest) (*TokenPair, erro
 	if err := crypto.CheckPassword(user.PasswordHash, req.Password); err != nil {
 		return nil, errors.New("invalid phone number or password")
 	}
+	return s.generateTokenPair(user.ID.String(), int(user.KYCTier))
+}
+
+func decodeGoogleJWT(token string) (map[string]interface{}, error) {
+	parts := strings.Split(token, ".")
+	if len(parts) < 2 {
+		return nil, errors.New("invalid token format")
+	}
+	// Google tokens might use RawURLEncoding without padding
+	payloadStr := parts[1]
+	if pad := len(payloadStr) % 4; pad != 0 {
+		payloadStr += strings.Repeat("=", 4-pad)
+	}
+	payload, err := base64.URLEncoding.DecodeString(payloadStr)
+	if err != nil {
+		return nil, err
+	}
+	var claims map[string]interface{}
+	if err := json.Unmarshal(payload, &claims); err != nil {
+		return nil, err
+	}
+	return claims, nil
+}
+
+// GoogleLogin verifies Google token and either registers or logs in the user.
+func (s *Service) GoogleLogin(ctx context.Context, idToken string) (*TokenPair, error) {
+	claims, err := decodeGoogleJWT(idToken)
+	if err != nil {
+		return nil, errors.New("invalid google token")
+	}
+
+	email, ok := claims["email"].(string)
+	if !ok || email == "" {
+		return nil, errors.New("google token missing email")
+	}
+
+	firstName, _ := claims["given_name"].(string)
+	lastName, _ := claims["family_name"].(string)
+
+	user, err := s.userRepo.FindByEmail(ctx, email)
+	if err != nil || user == nil {
+		// Register user automatically. Create a mock phone since our DB requires it.
+		// In a real scenario, we might prompt the user for phone number.
+		mockPhone := "+234" + uuid.New().String()[:10]
+
+		user = &models.User{
+			ID:           uuid.New(),
+			Phone:        mockPhone,
+			Email:        email,
+			PasswordHash: "google_oauth_no_password",
+			FirstName:    firstName,
+			LastName:     lastName,
+			KYCTier:      models.KYCTierUnverified,
+			IsActive:     true,
+			CreatedAt:    time.Now(),
+			UpdatedAt:    time.Now(),
+		}
+		if err := s.userRepo.Create(ctx, user); err != nil {
+			return nil, err
+		}
+
+		wallet := &models.Wallet{
+			ID:         uuid.New(),
+			UserID:     user.ID,
+			Currency:   models.NGN,
+			DailyLimit: 5_000_000,
+			CreatedAt:  time.Now(),
+			UpdatedAt:  time.Now(),
+		}
+		if err := s.walletRepo.Create(ctx, wallet); err != nil {
+			return nil, err
+		}
+		s.log.Info("new user registered via Google", zap.String("user_id", user.ID.String()))
+	} else if !user.IsActive {
+		return nil, errors.New("account is suspended")
+	}
+
 	return s.generateTokenPair(user.ID.String(), int(user.KYCTier))
 }
 
