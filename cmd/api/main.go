@@ -229,7 +229,7 @@ func main() {
 	}
 
 	// OPTIMIZED: Exposed Public Travel Group (Bypasses JWT auth validation so anonymous lookups work)
-	v1.POST("/auth/set-pin", authH.SetPIN)
+
 	publicTravel := v1.Group("/travel")
 	{
 		publicTravel.GET("/bus/search", travelH.SearchBus)
@@ -241,6 +241,7 @@ func main() {
 	p.Use(middleware.Auth(jwtManager))
 	{
 		p.POST("/auth/kyc/upgrade", authH.UpgradeKYC)
+		p.POST("/auth/set-pin", authH.SetPIN)
 		user := p.Group("/user")
 		{
 			user.GET("/profile", authH.GetProfile)
