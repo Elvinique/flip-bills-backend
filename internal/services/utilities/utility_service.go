@@ -7,7 +7,6 @@ package utilities
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -17,7 +16,6 @@ import (
 	"github.com/flip-bills/backend/internal/repository/postgres"
 	"github.com/flip-bills/backend/internal/services/loyalty"
 	"github.com/flip-bills/backend/internal/services/reconciliation"
-	"github.com/flip-bills/backend/pkg/crypto"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
 )
